@@ -18,6 +18,7 @@ import threading
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from rclpy.qos import (
     QoSProfile,
     QoSDurabilityPolicy,
@@ -70,6 +71,11 @@ class UsbCameraMonitor(Node):
         self._expected = [s for s in self.get_parameter('expected_serials').value if s]
         self._frame_id = self.get_parameter('frame_id').value
         period = float(self.get_parameter('poll_period_sec').value)
+        if period <= 0.0:
+            self.get_logger().warn(f'poll_period_sec={period} invalid; falling back to 2.0')
+            period = 2.0
+
+        self._shutdown = threading.Event()
 
         latched = QoSProfile(
             depth=1,
@@ -102,8 +108,8 @@ class UsbCameraMonitor(Node):
             monitor = pyudev.Monitor.from_netlink(context)
             monitor.filter_by('usb')
 
-            def handler(action, device):  # noqa: ARG001 - signature fixed by pyudev
-                self.scan_and_publish()
+            def handler(*_args):  # pyudev passes (action, device) or (device,) by version
+                self.scan_and_publish()  # already guarded against shutdown/errors
 
             observer = pyudev.MonitorObserver(monitor, handler)
             observer.start()
@@ -152,17 +158,26 @@ class UsbCameraMonitor(Node):
         return devices
 
     def scan_and_publish(self):
-        with self._lock:
-            devices = self.scan()
-            now = self.get_clock().now().to_msg()
+        # Called from the timer, the rescan service, and the (background) udev
+        # thread. Guard against running during/after shutdown and never let an
+        # exception escape -- a raising timer callback would stop the executor.
+        if self._shutdown.is_set() or not rclpy.ok():
+            return 0
+        try:
+            with self._lock:
+                devices = self.scan()
+                now = self.get_clock().now().to_msg()
 
-            arr = OrbbecUsbDeviceArray()
-            arr.header = Header(stamp=now, frame_id=self._frame_id)
-            arr.count = len(devices)
-            arr.devices = devices
-            self._dev_pub.publish(arr)
-            self._diag_pub.publish(self._build_diagnostics(devices, now))
-        return len(devices)
+                arr = OrbbecUsbDeviceArray()
+                arr.header = Header(stamp=now, frame_id=self._frame_id)
+                arr.count = len(devices)
+                arr.devices = devices
+                self._dev_pub.publish(arr)
+                self._diag_pub.publish(self._build_diagnostics(devices, now))
+                return len(devices)
+        except Exception as exc:
+            self.get_logger().warn(f'scan_and_publish failed: {exc}')
+            return 0
 
     def _on_rescan(self, request, response):
         """std_srvs/Trigger: force an immediate scan + publish on demand."""
@@ -217,23 +232,30 @@ class UsbCameraMonitor(Node):
             diag.status.append(status)
         return diag
 
+    def destroy_node(self):
+        self._shutdown.set()
+        observer = getattr(self, '_udev_observer', None)
+        if observer is not None:
+            try:
+                observer.stop()
+            except Exception:
+                pass
+            self._udev_observer = None
+        super().destroy_node()
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = UsbCameraMonitor()
+    node = None
     try:
+        node = UsbCameraMonitor()
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        if node._udev_observer is not None:
-            try:
-                node._udev_observer.stop()
-            except Exception:
-                pass
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
