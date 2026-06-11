@@ -4,25 +4,51 @@ set -euo pipefail
 # Define the vendor ID for Orbbec devices
 VID="2bc5"
 
+# --- Parse arguments ---
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        -h|--help)
+            echo "Usage: $0 [--dry-run]"
+            echo "  --dry-run  Use a fake device list to walk through the flow without"
+            echo "             any hardware connected (no sysfs access)."
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $arg" >&2
+            echo "Usage: $0 [--dry-run]" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # --- 1. Enumerate all connected Orbbec devices (serial + USB port) ---
 declare -a SERIALS PORTS
-for dev in /sys/bus/usb/devices/*; do
-    [ -e "$dev/idVendor" ] || continue
-    [ "$(cat "$dev/idVendor")" == "$VID" ] || continue
-    serial=$(cat "$dev/serial" 2>/dev/null || true)
-    [ -n "$serial" ] || continue
-    busid=$(basename "$dev")
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] Using a fake device list; no hardware required, no sysfs access."
+    echo
+    SERIALS=("CP3S34D00051" "CP3L44P00047" "CP3L44P0005Y" "CP3L44P00054")
+    PORTS=("2-1.1" "2-1.2" "2-1.3" "2-1.4")
+else
+    for dev in /sys/bus/usb/devices/*; do
+        [ -e "$dev/idVendor" ] || continue
+        [ "$(cat "$dev/idVendor")" == "$VID" ] || continue
+        serial=$(cat "$dev/serial" 2>/dev/null || true)
+        [ -n "$serial" ] || continue
+        busid=$(basename "$dev")
 
-    # Skip duplicate serials (a device may expose multiple sysfs nodes)
-    dup=0
-    for s in "${SERIALS[@]:-}"; do
-        if [ "$s" == "$serial" ]; then dup=1; break; fi
+        # Skip duplicate serials (a device may expose multiple sysfs nodes)
+        dup=0
+        for s in "${SERIALS[@]:-}"; do
+            if [ "$s" == "$serial" ]; then dup=1; break; fi
+        done
+        if [ "$dup" -eq 1 ]; then continue; fi
+
+        SERIALS+=("$serial")
+        PORTS+=("$busid")
     done
-    if [ "$dup" -eq 1 ]; then continue; fi
-
-    SERIALS+=("$serial")
-    PORTS+=("$busid")
-done
+fi
 
 count=${#SERIALS[@]}
 if [ "$count" -eq 0 ]; then
@@ -129,3 +155,6 @@ done
 } >> "$OUTPUT"
 
 echo "Launch file '$OUTPUT' has been generated for $count camera(s) (primary: ${NAMES[$primary_idx]})."
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] Generated from the fake device list above; verify against real hardware before use."
+fi
