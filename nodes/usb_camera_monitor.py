@@ -26,6 +26,7 @@ from rclpy.qos import (
 )
 
 from std_msgs.msg import Header
+from std_srvs.srv import Trigger
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from generate_orbbec_launch.msg import OrbbecUsbDevice, OrbbecUsbDeviceArray
 
@@ -81,6 +82,7 @@ class UsbCameraMonitor(Node):
 
         self._lock = threading.Lock()
         self._timer = self.create_timer(period, self.scan_and_publish)
+        self._rescan_srv = self.create_service(Trigger, '~/rescan', self._on_rescan)
         self._udev_observer = self._start_udev_observer()
 
         mode = 'pyudev hotplug + polling' if self._udev_observer else \
@@ -160,6 +162,15 @@ class UsbCameraMonitor(Node):
             arr.devices = devices
             self._dev_pub.publish(arr)
             self._diag_pub.publish(self._build_diagnostics(devices, now))
+        return len(devices)
+
+    def _on_rescan(self, request, response):
+        """std_srvs/Trigger: force an immediate scan + publish on demand."""
+        count = self.scan_and_publish()
+        response.success = True
+        response.message = f'rescanned: {count} Orbbec camera(s) detected'
+        self.get_logger().info(response.message)
+        return response
 
     def _build_diagnostics(self, devices, stamp):
         diag = DiagnosticArray()

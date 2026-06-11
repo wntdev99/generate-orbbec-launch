@@ -22,6 +22,7 @@
   <!-- <depend>rclcpp</depend> -->
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>python3-pyudev</exec_depend>
   <exec_depend>orbbec_camera</exec_depend>
   <exec_depend>launch</exec_depend>
