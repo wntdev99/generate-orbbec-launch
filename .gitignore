@@ -1,0 +1,12 @@
+# Generated launch files are host-specific (USB ports / serials) -> not tracked.
+# Remove this rule if you want to commit a particular generated launch file.
+/launch/*.launch.py
+
+# ROS 2 / colcon build artifacts
+/build/
+/install/
+/log/
+
+# Python
+__pycache__/
+*.pyc

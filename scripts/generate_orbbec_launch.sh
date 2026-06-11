@@ -137,18 +137,24 @@ else
 fi
 
 # --- 4. Generate the launch file ---
+# Save into the package's launch/ directory, resolved relative to this script
+# (scripts/ -> ../launch), so colcon installs the file on the next build.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+LAUNCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/launch"
+mkdir -p "$LAUNCH_DIR"
+
 # Output name reflects the chosen mode:
 #   sync     -> multi_camera_synced.launch.py
 #   no-sync  -> multi_camera_<standalone|free_run>.launch.py
 if [ "$NO_SYNC" -eq 1 ]; then
-    OUTPUT="multi_camera_${ASYNC_MODE}.launch.py"
+    OUTPUT="$LAUNCH_DIR/multi_camera_${ASYNC_MODE}.launch.py"
 else
-    OUTPUT="multi_camera_synced.launch.py"
+    OUTPUT="$LAUNCH_DIR/multi_camera_synced.launch.py"
 fi
 
 # Confirm before overwriting an existing file
 if [ -e "$OUTPUT" ]; then
-    read -rp "'$OUTPUT' already exists in $(pwd). Overwrite? [y/N]: " ans
+    read -rp "'$OUTPUT' already exists. Overwrite? [y/N]: " ans
     case "$ans" in
         [yY]|[yY][eE][sS]) ;;
         *) echo "Aborted; existing file kept."; exit 0 ;;
@@ -217,14 +223,14 @@ done
     echo "    return ld"
 } >> "$OUTPUT"
 
-echo "Launch file generated: $(pwd)/$OUTPUT"
+echo "Launch file generated: $OUTPUT"
 if [ "$NO_SYNC" -eq 1 ]; then
     echo "  -> $count camera(s), async mode: ${ASYNC_MODE} (no synchronization, no primary)"
 else
     echo "  -> $count camera(s), primary: ${NAMES[$primary_idx]}"
 fi
-echo "  Note: this file is created in the current directory. Place/install it into the"
-echo "        orbbec_camera package's launch/ directory before running it."
+echo "  Note: saved into this package's launch/ directory. Rebuild the workspace"
+echo "        (colcon build) so the launch file is installed before running it."
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "[dry-run] Generated from the fake device list above; verify against real hardware before use."
 fi
