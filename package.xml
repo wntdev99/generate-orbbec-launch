@@ -4,23 +4,31 @@
   <name>generate_orbbec_launch</name>
   <version>0.1.0</version>
   <description>
-    Tooling and launch files for running multiple Orbbec Gemini cameras,
-    either hardware-synchronized (primary/secondary) or independently
-    (standalone / free_run). Includes an interactive launch-file generator.
+    Tooling, launch files and monitoring nodes for running multiple Orbbec
+    Gemini cameras, either hardware-synchronized (primary/secondary) or
+    independently (standalone / free_run). Includes an interactive launch-file
+    generator and a USB camera inventory monitor.
   </description>
   <maintainer email="jeongmin.choi@wattrobotics.ai">wntdev99</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
-  <!-- Uncomment the relevant client library when adding nodes -->
+  <depend>std_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+
+  <!-- Uncomment when C++ nodes are added -->
   <!-- <depend>rclcpp</depend> -->
-  <!-- <depend>rclpy</depend> -->
 
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-pyudev</exec_depend>
   <exec_depend>orbbec_camera</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
