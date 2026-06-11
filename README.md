@@ -7,6 +7,8 @@
    카메라 런치 파일을 생성하는 **스크립트**(`scripts/generate_orbbec_launch.sh`).
 2. USB 버스에 연결된 카메라 목록·포트·USB 세대를 토픽으로 발행하는 **모니터 노드**
    (`usb_camera_monitor`).
+3. 카메라/USB 관련 커널 로그(dmesg)를 토픽으로 발행하는 **모니터 노드**
+   (`kernel_log_monitor`).
 
 ## 패키지 구조
 
@@ -16,10 +18,12 @@ generate_orbbec_launch/
 ├── CMakeLists.txt              # 빌드/설치 규칙 (C++ 노드 추가 지점 주석으로 표시)
 ├── msg/
 │   ├── OrbbecUsbDevice.msg      # USB 카메라 1대의 정보
-│   └── OrbbecUsbDeviceArray.msg # 탐지된 카메라 스냅샷
+│   ├── OrbbecUsbDeviceArray.msg # 탐지된 카메라 스냅샷
+│   └── KernelLogEntry.msg       # 커널 로그 1줄
 ├── launch/                     # 생성된 런치 파일이 저장되는 위치 (colcon이 설치)
 ├── nodes/
-│   └── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
+│   ├── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
+│   └── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
 └── scripts/
     └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
 ```
@@ -179,3 +183,46 @@ sudo apt install python3-pyudev   # 핫플러그 즉시 감지를 원할 때
 
 > **검증 완료**: ROS 2 Jazzy에서 `colcon build` 후, 실제 USB 장치로 `~/devices`·`/diagnostics`
 > 발행, USB2 장치의 `below_usb3=true`/WARN, `expected_serials` 누락 시 요약 ERROR까지 확인했습니다.
+
+---
+
+# `kernel_log_monitor` 노드
+
+카메라/USB 관련 **커널 로그(dmesg)** 라인을 토픽으로 발행하는 `rclpy` 노드입니다.
+
+```bash
+ros2 run generate_orbbec_launch kernel_log_monitor
+```
+
+## 권한 — root 불필요 (단, 그룹 필요)
+
+Ubuntu는 `kernel.dmesg_restrict=1`이 기본이라 `dmesg`/`/dev/kmsg` 직접 읽기는 root/`CAP_SYSLOG`가
+필요합니다. 이 노드는 대신 **systemd 저널의 커널 스트림**(`journalctl -k -f`)을 따라가므로,
+실행 사용자가 **`adm` 또는 `systemd-journal` 그룹**에 속해 있으면 **root 없이** 동작합니다.
+
+```bash
+groups | grep -E 'adm|systemd-journal'   # 둘 중 하나에 속해 있어야 함
+```
+
+그룹에 없거나 `journalctl`이 없으면 노드는 살아 있되 `/diagnostics`에 **ERROR**로 사유를 보고합니다.
+
+## 발행 토픽
+
+| 토픽 | 타입 | 설명 |
+|---|---|---|
+| `~/kernel_log` | `generate_orbbec_launch/KernelLogEntry` | 매칭된 커널 로그 라인 (우선순위·메시지·매칭 키워드) |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | 누적 err/warn/info 카운트 + 마지막 메시지 요약 |
+
+## 파라미터
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `keywords` | `['usb','uvcvideo','xhci','orbbec','2bc5']` | 대소문자 무시 부분 일치 필터 |
+| `max_priority` | `7` | 이 값 이하 우선순위만 발행 (예: `4`면 warning 이상만) |
+| `include_backlog` | `false` | 시작 시 최근 로그도 방출할지 |
+| `backlog_lines` | `50` | `include_backlog` 시 방출할 최근 커널 라인 수 |
+| `frame_id` | `''` | 메시지 헤더 frame_id |
+
+> **검증 완료**: FastDDS(localhost)로 빌드·실행 후, 최근 커널 로그에 실재하는 키워드로
+> `~/kernel_log` 발행과 진단 카운트(info_count=9, 마지막 메시지 텍스트)까지 확인했습니다.
+> (로컬 테스트는 zenoh 충돌 방지를 위해 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`로 수행)
