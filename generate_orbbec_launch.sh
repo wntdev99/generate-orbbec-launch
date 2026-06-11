@@ -69,9 +69,17 @@ for i in "${!SERIALS[@]}"; do
     while true; do
         printf "Camera [%d]  serial=%s  usb_port=%s\n" "$i" "${SERIALS[$i]}" "${PORTS[$i]}"
         read -rp "  Enter a name for this camera (e.g. front_camera): " name
-        name=$(echo "$name" | xargs)  # trim surrounding whitespace
+        # Trim surrounding whitespace (parameter expansion -> safe with any input)
+        name="${name#"${name%%[![:space:]]*}"}"
+        name="${name%"${name##*[![:space:]]}"}"
         if [ -z "$name" ]; then
             echo "  Name cannot be empty."
+            continue
+        fi
+        # Must be a valid ROS 2 name: starts with a letter, then letters/digits/underscores.
+        # This also prevents quotes/$/backticks from breaking (or injecting into) the generated file.
+        if [[ ! "$name" =~ ^[a-zA-Z][a-zA-Z0-9_]*$ ]]; then
+            echo "  Invalid name '$name'. Use letters, digits and underscores only, starting with a letter."
             continue
         fi
         if [ -n "${NAME_SEEN[$name]:-}" ]; then
@@ -101,6 +109,15 @@ echo
 
 # --- 4. Generate the launch file ---
 OUTPUT="multi_camera_synced.launch.py"
+
+# Confirm before overwriting an existing file
+if [ -e "$OUTPUT" ]; then
+    read -rp "'$OUTPUT' already exists in $(pwd). Overwrite? [y/N]: " ans
+    case "$ans" in
+        [yY]|[yY][eE][sS]) ;;
+        *) echo "Aborted; existing file kept."; exit 0 ;;
+    esac
+fi
 
 cat > "$OUTPUT" << 'EOF'
 from launch import LaunchDescription
@@ -154,7 +171,10 @@ done
     echo "    return ld"
 } >> "$OUTPUT"
 
-echo "Launch file '$OUTPUT' has been generated for $count camera(s) (primary: ${NAMES[$primary_idx]})."
+echo "Launch file generated: $(pwd)/$OUTPUT"
+echo "  -> $count camera(s), primary: ${NAMES[$primary_idx]}"
+echo "  Note: this file is created in the current directory. Place/install it into the"
+echo "        orbbec_camera package's launch/ directory before running it."
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "[dry-run] Generated from the fake device list above; verify against real hardware before use."
 fi
