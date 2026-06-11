@@ -6,22 +6,44 @@ VID="2bc5"
 
 # --- Parse arguments ---
 DRY_RUN=0
+NO_SYNC=0
+ASYNC_MODE="standalone"  # default mode when --no-sync is used
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
+        --no-sync) NO_SYNC=1 ;;
+        --no-sync=*)
+            NO_SYNC=1
+            ASYNC_MODE="${arg#--no-sync=}"
+            ;;
         -h|--help)
-            echo "Usage: $0 [--dry-run]"
-            echo "  --dry-run  Use a fake device list to walk through the flow without"
-            echo "             any hardware connected (no sysfs access)."
+            echo "Usage: $0 [--dry-run] [--no-sync[=standalone|free_run]]"
+            echo "  --dry-run   Use a fake device list to walk through the flow without"
+            echo "              any hardware connected (no sysfs access)."
+            echo "  --no-sync   Generate an UNsynchronized config: every camera runs"
+            echo "              independently, with no primary and no trigger wiring."
+            echo "              Default mode is 'standalone' (color/depth synced within"
+            echo "              each device). Use --no-sync=free_run for fully free run."
             exit 0
             ;;
         *)
             echo "Unknown argument: $arg" >&2
-            echo "Usage: $0 [--dry-run]" >&2
+            echo "Usage: $0 [--dry-run] [--no-sync[=standalone|free_run]]" >&2
             exit 1
             ;;
     esac
 done
+
+# Validate the async mode value
+if [ "$NO_SYNC" -eq 1 ]; then
+    case "$ASYNC_MODE" in
+        standalone|free_run) ;;
+        *)
+            echo "Invalid --no-sync mode '$ASYNC_MODE'. Use 'standalone' or 'free_run'." >&2
+            exit 1
+            ;;
+    esac
+fi
 
 # --- 1. Enumerate all connected Orbbec devices (serial + USB port) ---
 declare -a SERIALS PORTS
@@ -94,18 +116,25 @@ done
 echo
 
 # --- 3. Select the PRIMARY camera (software_triggering) ---
-echo "Which camera is the PRIMARY (software_triggering)? The rest use hardware_triggering."
-for i in "${!NAMES[@]}"; do
-    printf "  [%d] %s  (serial=%s)\n" "$i" "${NAMES[$i]}" "${SERIALS[$i]}"
-done
-while true; do
-    read -rp "Enter the index of the primary camera: " primary_idx
-    if [[ "$primary_idx" =~ ^[0-9]+$ ]] && [ "$primary_idx" -ge 0 ] && [ "$primary_idx" -lt "$count" ]; then
-        break
-    fi
-    echo "  Invalid index. Enter a number between 0 and $((count - 1))."
-done
-echo
+# In --no-sync mode there is no primary: every camera runs independently.
+primary_idx=-1
+if [ "$NO_SYNC" -eq 1 ]; then
+    echo "[no-sync] Asynchronous mode: every camera uses sync_mode='${ASYNC_MODE}'. No primary, no trigger wiring."
+    echo
+else
+    echo "Which camera is the PRIMARY (software_triggering)? The rest use hardware_triggering."
+    for i in "${!NAMES[@]}"; do
+        printf "  [%d] %s  (serial=%s)\n" "$i" "${NAMES[$i]}" "${SERIALS[$i]}"
+    done
+    while true; do
+        read -rp "Enter the index of the primary camera: " primary_idx
+        if [[ "$primary_idx" =~ ^[0-9]+$ ]] && [ "$primary_idx" -ge 0 ] && [ "$primary_idx" -lt "$count" ]; then
+            break
+        fi
+        echo "  Invalid index. Enter a number between 0 and $((count - 1))."
+    done
+    echo
+fi
 
 # --- 4. Generate the launch file ---
 OUTPUT="multi_camera_synced.launch.py"
@@ -136,7 +165,9 @@ EOF
 
 # One IncludeLaunchDescription block per camera
 for i in "${!NAMES[@]}"; do
-    if [ "$i" -eq "$primary_idx" ]; then
+    if [ "$NO_SYNC" -eq 1 ]; then
+        sync_mode="$ASYNC_MODE"
+    elif [ "$i" -eq "$primary_idx" ]; then
         sync_mode="software_triggering"
     else
         sync_mode="hardware_triggering"
@@ -158,21 +189,33 @@ for i in "${!NAMES[@]}"; do
 EOF
 done
 
-# LaunchDescription: secondaries first, primary launched last via TimerAction
+# LaunchDescription:
+#   sync mode  -> secondaries first, primary launched last via TimerAction
+#   no-sync    -> every camera launched independently (order irrelevant)
 {
     echo "    ld = LaunchDescription(["
-    for i in "${!NAMES[@]}"; do
-        if [ "$i" -eq "$primary_idx" ]; then continue; fi
-        echo "        GroupAction([cam_${i}]),"
-    done
-    echo "        TimerAction(period=3.0, actions=[GroupAction([cam_${primary_idx}])]), # The primary camera should be launched at last"
+    if [ "$NO_SYNC" -eq 1 ]; then
+        for i in "${!NAMES[@]}"; do
+            echo "        GroupAction([cam_${i}]),"
+        done
+    else
+        for i in "${!NAMES[@]}"; do
+            if [ "$i" -eq "$primary_idx" ]; then continue; fi
+            echo "        GroupAction([cam_${i}]),"
+        done
+        echo "        TimerAction(period=3.0, actions=[GroupAction([cam_${primary_idx}])]), # The primary camera should be launched at last"
+    fi
     echo "    ])"
     echo ""
     echo "    return ld"
 } >> "$OUTPUT"
 
 echo "Launch file generated: $(pwd)/$OUTPUT"
-echo "  -> $count camera(s), primary: ${NAMES[$primary_idx]}"
+if [ "$NO_SYNC" -eq 1 ]; then
+    echo "  -> $count camera(s), async mode: ${ASYNC_MODE} (no synchronization, no primary)"
+else
+    echo "  -> $count camera(s), primary: ${NAMES[$primary_idx]}"
+fi
 echo "  Note: this file is created in the current directory. Place/install it into the"
 echo "        orbbec_camera package's launch/ directory before running it."
 if [ "$DRY_RUN" -eq 1 ]; then
