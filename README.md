@@ -138,6 +138,17 @@ ros2 run generate_orbbec_launch usb_camera_monitor
 각 카메라에 대해 시리얼·제품명·USB 포트·링크 속도(`speed_mbps`)·USB 세대(`usb_generation`)·
 `bcd_usb`를 제공합니다.
 
+## 제공 서비스
+
+| 서비스 | 타입 | 설명 |
+|---|---|---|
+| `~/rescan` | `std_srvs/Trigger` | 폴링 주기를 기다리지 않고 **즉시 재스캔**하여 토픽을 갱신. 응답 메시지에 탐지 대수 포함 |
+
+```bash
+ros2 service call /usb_camera_monitor/rescan std_srvs/srv/Trigger
+# -> success=True, message='rescanned: N Orbbec camera(s) detected'
+```
+
 ## 핵심 진단: USB2 강등 감지
 
 Gemini 330은 USB3 카메라입니다. **USB2 포트나 저급 케이블에 꽂혀 링크가 480 Mbps로 떨어지면**
