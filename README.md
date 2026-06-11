@@ -1,25 +1,28 @@
 # generate_orbbec_launch
 
 여러 대의 Orbbec Gemini 카메라를 실행하기 위한 **ROS 2 패키지**(`ament_cmake`, C++/Python
-혼합 가능, 대상 배포판 **Jazzy**)입니다. 핵심 도구로, 연결된 Orbbec(VID `2bc5`) 카메라를
-자동 탐지하고 대화형으로 이름·primary를 지정해 멀티 카메라 런치 파일을 생성하는 스크립트를
-포함합니다.
+혼합 가능, 대상 배포판 **Jazzy**)입니다. 두 가지 핵심 기능을 제공합니다.
+
+1. 연결된 Orbbec(VID `2bc5`) 카메라를 자동 탐지하고 대화형으로 이름·primary를 지정해 멀티
+   카메라 런치 파일을 생성하는 **스크립트**(`scripts/generate_orbbec_launch.sh`).
+2. USB 버스에 연결된 카메라 목록·포트·USB 세대를 토픽으로 발행하는 **모니터 노드**
+   (`usb_camera_monitor`).
 
 ## 패키지 구조
 
 ```
 generate_orbbec_launch/
-├── package.xml                 # ament_cmake 패키지 매니페스트
-├── CMakeLists.txt              # 빌드/설치 규칙 (C++·Python 노드 추가 지점 주석으로 표시)
+├── package.xml                 # ament_cmake 패키지 매니페스트 (rosidl 메시지 생성 포함)
+├── CMakeLists.txt              # 빌드/설치 규칙 (C++ 노드 추가 지점 주석으로 표시)
+├── msg/
+│   ├── OrbbecUsbDevice.msg      # USB 카메라 1대의 정보
+│   └── OrbbecUsbDeviceArray.msg # 탐지된 카메라 스냅샷
 ├── launch/                     # 생성된 런치 파일이 저장되는 위치 (colcon이 설치)
-├── scripts/
-│   └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
-└── generate_orbbec_launch/     # 향후 Python 노드를 담을 모듈
-    └── __init__.py
+├── nodes/
+│   └── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
+└── scripts/
+    └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
 ```
-
-> 노드는 아직 추가되지 않았습니다. `CMakeLists.txt`와 `package.xml`에 C++(`rclcpp`)·
-> Python(`rclpy`) 노드를 추가할 지점이 주석으로 표시되어 있습니다.
 
 ## 빌드
 
@@ -100,6 +103,7 @@ cd scripts
 - Linux (USB 장치 탐지에 `/sys/bus/usb/devices` 사용)
 - ROS 2 Jazzy + `colcon` (패키지 빌드 시)
 - `orbbec_camera` 패키지 (생성된 런치 파일 실행 시)
+- `rclpy` (모니터 노드 실행 시), `python3-pyudev` (선택: 핫플러그 즉시 감지)
 
 ## 생성 결과 예시
 
@@ -112,3 +116,55 @@ cd scripts
   `hardware_triggering`. 비동기(`--no-sync`) 모드에서는 모든 카메라가 `standalone`
   (또는 `free_run`)
 - `config_file_path` — `orbbec_camera` 패키지의 `config/camera_params.yaml`
+
+---
+
+# `usb_camera_monitor` 노드
+
+USB 버스에 연결된 Orbbec 카메라 목록을 토픽으로 발행하는 `rclpy` 노드입니다. `/sys/bus/usb/devices`를
+읽으므로 **root 권한이 필요 없습니다.**
+
+```bash
+ros2 run generate_orbbec_launch usb_camera_monitor
+```
+
+## 발행 토픽
+
+| 토픽 | 타입 | 설명 |
+|---|---|---|
+| `~/devices` | `generate_orbbec_launch/OrbbecUsbDeviceArray` | 탐지된 카메라 스냅샷 (latched: `transient_local`) |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | `rqt_robot_monitor`용 진단 (요약 + 카메라별 상태) |
+
+각 카메라에 대해 시리얼·제품명·USB 포트·링크 속도(`speed_mbps`)·USB 세대(`usb_generation`)·
+`bcd_usb`를 제공합니다.
+
+## 핵심 진단: USB2 강등 감지
+
+Gemini 330은 USB3 카메라입니다. **USB2 포트나 저급 케이블에 꽂혀 링크가 480 Mbps로 떨어지면**
+대역폭 부족으로 depth/color 스트림이 실패할 수 있습니다. 노드는 이 경우(`below_usb3=true`)를
+diagnostic **WARN**으로 표면화합니다.
+
+```
+orbbec_usb: <serial>  WARN  running at USB 2.0 (High-Speed 480 Mbps) - USB3 expected; depth/color may fail
+```
+
+## 파라미터
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `poll_period_sec` | `2.0` | sysfs 폴링 주기(초) |
+| `vendor_ids` | `['2bc5']` | 탐지할 USB VID 목록 |
+| `expected_serials` | `[]` | 기대 시리얼. 누락 시 요약 진단을 **ERROR**로 발행 |
+| `frame_id` | `''` | 메시지 헤더 frame_id |
+
+## 핫플러그(pyudev) — 선택 사항
+
+`pyudev`가 설치돼 있으면 USB 연결/해제 이벤트에 **즉시** 반응해 토픽을 갱신합니다. 없으면
+폴링만으로 동작합니다(시작 로그에 모드 표시).
+
+```bash
+sudo apt install python3-pyudev   # 핫플러그 즉시 감지를 원할 때
+```
+
+> **검증 완료**: ROS 2 Jazzy에서 `colcon build` 후, 실제 USB 장치로 `~/devices`·`/diagnostics`
+> 발행, USB2 장치의 `below_usb3=true`/WARN, `expected_serials` 누락 시 요약 ERROR까지 확인했습니다.
