@@ -137,7 +137,14 @@ else
 fi
 
 # --- 4. Generate the launch file ---
-OUTPUT="multi_camera_synced.launch.py"
+# Output name reflects the chosen mode:
+#   sync     -> multi_camera_synced.launch.py
+#   no-sync  -> multi_camera_<standalone|free_run>.launch.py
+if [ "$NO_SYNC" -eq 1 ]; then
+    OUTPUT="multi_camera_${ASYNC_MODE}.launch.py"
+else
+    OUTPUT="multi_camera_synced.launch.py"
+fi
 
 # Confirm before overwriting an existing file
 if [ -e "$OUTPUT" ]; then
