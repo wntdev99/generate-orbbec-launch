@@ -45,3 +45,10 @@ link_latency_gateway:
     timeout_sec: 1.0
     period_sec: 1.0
     frame_id: ''
+
+net_throughput_monitor:
+  ros__parameters:
+    interfaces: ['auto']            # 'auto' = egress iface via route; or explicit ['eno1', ...]
+    route_target: '8.8.8.8'         # target used to resolve the egress iface when 'auto'
+    period_sec: 1.0
+    frame_id: ''

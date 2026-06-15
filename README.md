@@ -13,6 +13,8 @@
    (`wifi_wan_monitor`) — 유선 연결 머신용.
 5. 종단 latency와 끊김(지속 시간·횟수)을 토픽으로 발행하는 **모니터 노드**
    (`link_latency_monitor`).
+6. 네트워크 인터페이스 사용량(rx/tx)을 토픽으로 발행하는 **모니터 노드**
+   (`net_throughput_monitor`, 인터페이스 자동 감지).
 
 ## 패키지 구조
 
@@ -26,7 +28,8 @@ generate_orbbec_launch/
 │   ├── KernelLogEntry.msg       # 커널 로그 1줄
 │   ├── WifiWanStatus.msg        # 공유기 WiFi WAN 신호
 │   ├── PingLatency.msg          # latency 샘플 1건
-│   └── LinkOutage.msg           # 끊김 1건(복구 시)
+│   ├── LinkOutage.msg           # 끊김 1건(복구 시)
+│   └── NetThroughput.msg        # 인터페이스 throughput 1건
 ├── config/
 │   └── monitors.yaml            # 노드 파라미터 (주기 등) 중앙 관리
 ├── launch/
@@ -38,7 +41,8 @@ generate_orbbec_launch/
 │   ├── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
 │   ├── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
 │   ├── wifi_wan_monitor.py      # 공유기 WiFi WAN 신호 모니터 노드 (rclpy)
-│   └── link_latency_monitor.py  # 종단 latency/끊김 모니터 노드 (rclpy)
+│   ├── link_latency_monitor.py  # 종단 latency/끊김 모니터 노드 (rclpy)
+│   └── net_throughput_monitor.py # 네트워크 사용량(rx/tx) 모니터 노드 (rclpy)
 └── scripts/
     ├── setup.sh                    # 의존성 설치 + colcon 빌드 (+선택: 라우터 SSH 키)
     └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
@@ -66,8 +70,8 @@ source install/setup.bash
 
 ## 설정 (`config/monitors.yaml`)
 
-세 모니터 노드의 파라미터(특히 **주기**)는 `config/monitors.yaml`에서 한곳에 관리합니다.
-launch 파일들이 이 파일을 읽어 적용합니다.
+모니터 노드들의 파라미터(특히 **주기**)는 `config/monitors.yaml`에서 한곳에 관리합니다.
+launch 파일들이 이 파일을 읽어 적용합니다(노드별 섹션, 한 파일 공유).
 
 | 노드 | 주기 파라미터 | 기본값 |
 |---|---|---|
@@ -446,3 +450,40 @@ ros2 launch generate_orbbec_launch link_latency.launch.py enable_gateway:=false 
 > **검증 완료**: 빌드 통과 / outage state machine 단위검증(2회 끊김, 2초·1초 지속) / 두 인스턴스
 > 라이브 — `/link_latency_gateway` rtt≈2.9ms, `/link_latency_internet` rtt≈37ms, 무응답 시
 > `valid=false rtt_ms=.nan` 확인.
+
+---
+
+# `net_throughput_monitor` 노드 (네트워크 사용량)
+
+네트워크 인터페이스의 **rx/tx 사용량**을 발행합니다. `/sys/class/net/<iface>/statistics`를
+읽으므로 **root 불필요**. 인터페이스는 **자동 감지**가 기본입니다.
+
+```bash
+ros2 launch generate_orbbec_launch net_throughput_monitor.launch.py
+ros2 topic echo /net_throughput_monitor/throughput
+```
+
+## 인터페이스 자동 감지
+
+- `interfaces: ['auto']`(기본) → `ip route get <route_target>`로 **현재 egress 인터페이스**를
+  매 주기 해석합니다. 머신마다 이름이 달라도(eno1/enp3s0/wlp…) 자동으로 맞고, **유선↔WiFi
+  failover도 따라갑니다**(메시지의 `iface`로 현재 사용 인터페이스 확인).
+- 특정 인터페이스 고정: `interfaces: ['eno1']` 처럼 명시.
+
+## 발행 토픽
+
+| 토픽 | 타입 | 내용 |
+|---|---|---|
+| `~/throughput` | `NetThroughput` | `iface`, `rx_bytes`/`tx_bytes`(누적), `rx_bps`/`tx_bps`(B/s rate) |
+
+## 파라미터 (`config/monitors.yaml`)
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `interfaces` | `['auto']` | `'auto'` 또는 명시적 이름 목록 |
+| `route_target` | `8.8.8.8` | `'auto'`일 때 egress 해석에 쓰는 목적지 |
+| `period_sec` | `1.0` | 샘플/발행 주기 |
+
+> **검증 완료**: 빌드 통과 / 라이브로 egress 자동 감지(`wlp0s20f3`)와 rx_bytes·tx_bytes·
+> rx_bps·tx_bps(실시간 변동) 발행 확인 / `all.launch.py`에 포함되어 6개 노드 동시 기동 확인.
+> (공유기 인터페이스 `sta1`=WAN/`br-lan`=LAN throughput은 SSH 필요 — 다음 단계)
