@@ -1,0 +1,30 @@
+# Parameters for the generate_orbbec_launch monitor nodes.
+# Loaded by launch/monitors.launch.py and launch/wifi_wan_monitor.launch.py.
+# Override at runtime with:  ros2 launch ... config_file:=/path/to/your.yaml
+
+usb_camera_monitor:
+  ros__parameters:
+    poll_period_sec: 2.0            # sysfs scan interval (s)
+    vendor_ids: ['2bc5']            # Orbbec USB vendor id(s)
+    # expected_serials: ['CP3S34D00051']  # uncomment to raise ERROR when an expected camera is missing
+    frame_id: ''
+
+kernel_log_monitor:
+  ros__parameters:
+    keywords: ['usb', 'uvcvideo', 'xhci', 'orbbec', '2bc5']
+    max_priority: 7                 # publish entries with priority <= this (0=emerg .. 7=debug)
+    include_backlog: false          # also emit recent lines on startup
+    backlog_lines: 50               # how many recent lines when include_backlog
+    diag_period_sec: 5.0            # /diagnostics summary interval (s)
+    frame_id: ''
+
+wifi_wan_monitor:
+  ros__parameters:
+    router_host: '192.168.34.1'
+    router_user: 'root'
+    wan_iface: 'sta1'               # router WiFi WAN (uplink) interface, per iwinfo
+    poll_period_sec: 15.0           # how often to SSH the router (s) -- keep generous
+    ssh_timeout_sec: 8.0
+    weak_warn_dbm: -70              # WARN at/below this signal
+    weak_error_dbm: -80             # ERROR at/below this signal
+    frame_id: ''

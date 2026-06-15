@@ -1,8 +1,9 @@
 # Generated launch files are host-specific (USB ports / serials) -> not tracked.
 # Remove this rule if you want to commit a particular generated launch file.
 /launch/*.launch.py
-# ...but the hand-authored monitor launch file IS tracked.
+# ...but the hand-authored monitor launch files ARE tracked.
 !/launch/monitors.launch.py
+!/launch/wifi_wan_monitor.launch.py
 
 # ROS 2 / colcon build artifacts
 /build/

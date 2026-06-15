@@ -39,6 +39,7 @@ class KernelLogMonitor(Node):
         self.declare_parameter('max_priority', 7)          # publish entries with priority <= this
         self.declare_parameter('include_backlog', False)   # also emit recent existing journal lines
         self.declare_parameter('backlog_lines', 50)        # how many recent lines when include_backlog
+        self.declare_parameter('diag_period_sec', 5.0)     # /diagnostics summary interval
         self.declare_parameter('frame_id', '')
 
         self._keywords = [k.lower() for k in self.get_parameter('keywords').value if k]
@@ -46,6 +47,9 @@ class KernelLogMonitor(Node):
         self._backlog_lines = max(0, int(self.get_parameter('backlog_lines').value))
         self._frame_id = self.get_parameter('frame_id').value
         self._backlog = bool(self.get_parameter('include_backlog').value)
+        diag_period = float(self.get_parameter('diag_period_sec').value)
+        if diag_period <= 0.0:
+            diag_period = 5.0
 
         self._pub = self.create_publisher(KernelLogEntry, '~/kernel_log', 50)
         self._diag_pub = self.create_publisher(DiagnosticArray, '/diagnostics', 10)
@@ -59,7 +63,7 @@ class KernelLogMonitor(Node):
         self._proc = None
         self._stop = threading.Event()
 
-        self.create_timer(5.0, self._publish_diagnostics)
+        self.create_timer(diag_period, self._publish_diagnostics)
 
         # The reader runs journalctl and auto-reconnects with backoff if the
         # stream ends, so a journald restart or transient error doesn't stop

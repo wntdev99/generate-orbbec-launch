@@ -23,8 +23,11 @@ generate_orbbec_launch/
 │   ├── OrbbecUsbDeviceArray.msg # 탐지된 카메라 스냅샷
 │   ├── KernelLogEntry.msg       # 커널 로그 1줄
 │   └── WifiWanStatus.msg        # 공유기 WiFi WAN 신호
+├── config/
+│   └── monitors.yaml            # 노드 파라미터 (주기 등) 중앙 관리
 ├── launch/
-│   └── monitors.launch.py       # 두 모니터 노드를 함께 실행 (생성 런치 파일과 달리 git 추적)
+│   ├── monitors.launch.py       # usb+kernel 모니터 함께 실행 (config 사용)
+│   └── wifi_wan_monitor.launch.py  # WiFi WAN 모니터 실행 (config 사용)
 ├── nodes/
 │   ├── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
 │   ├── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
@@ -52,6 +55,30 @@ cd <workspace>/src/generate_orbbec_launch
 cd <workspace>
 colcon build --packages-select generate_orbbec_launch
 source install/setup.bash
+```
+
+## 설정 (`config/monitors.yaml`)
+
+세 모니터 노드의 파라미터(특히 **주기**)는 `config/monitors.yaml`에서 한곳에 관리합니다.
+launch 파일들이 이 파일을 읽어 적용합니다.
+
+| 노드 | 주기 파라미터 | 기본값 |
+|---|---|---|
+| `usb_camera_monitor` | `poll_period_sec` | **2.0초** (sysfs 스캔) |
+| `kernel_log_monitor` | `diag_period_sec` | **5.0초** (진단 요약; 로그 자체는 실시간 follow) |
+| `wifi_wan_monitor` | `poll_period_sec` | **15.0초** (공유기 SSH) |
+
+YAML을 수정한 뒤 다시 빌드(설치)하거나, 다른 파일로 덮어쓸 수 있습니다:
+```bash
+ros2 launch generate_orbbec_launch monitors.launch.py config_file:=/path/to/your.yaml
+```
+
+## 모니터 실행 (launch)
+
+```bash
+ros2 launch generate_orbbec_launch monitors.launch.py          # usb + kernel (config 적용)
+ros2 launch generate_orbbec_launch monitors.launch.py enable_kernel_monitor:=false
+ros2 launch generate_orbbec_launch wifi_wan_monitor.launch.py  # WiFi WAN dBm (config 적용)
 ```
 
 ## 동작 방식
