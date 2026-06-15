@@ -9,3 +9,5 @@ uint32 speed_mbps        # negotiated link speed in Mbit/s (e.g. 480, 5000)
 string usb_generation    # human-readable, e.g. "USB 3.2 Gen1 (5 Gbps)"
 string bcd_usb           # bcdUSB / sysfs "version" field, e.g. "3.10"
 bool below_usb3          # true if 0 < speed_mbps < 5000 (likely bandwidth-limited link)
+uint32 connect_count     # times (re)connected since node start (0 if present since start)
+uint32 disconnect_count  # times disconnected since node start

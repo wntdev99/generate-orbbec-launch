@@ -77,6 +77,13 @@ class UsbCameraMonitor(Node):
 
         self._shutdown = threading.Event()
 
+        # connect/disconnect tracking (counters start at 0 each launch)
+        # key (serial or usb_port) -> {'present': bool, 'connect': int, 'disconnect': int}
+        self._history = {}
+        self._first_scan = True
+        self._total_connects = 0
+        self._total_disconnects = 0
+
         latched = QoSProfile(
             depth=1,
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -166,6 +173,7 @@ class UsbCameraMonitor(Node):
         try:
             with self._lock:
                 devices = self.scan()
+                self._update_history(devices)
                 now = self.get_clock().now().to_msg()
 
                 arr = OrbbecUsbDeviceArray()
@@ -187,6 +195,47 @@ class UsbCameraMonitor(Node):
         self.get_logger().info(response.message)
         return response
 
+    def _update_history(self, devices):
+        """Compare the current device set to the previous one and count
+        connect/disconnect transitions. Also fills each device's
+        connect_count/disconnect_count. Must run under self._lock."""
+        present_keys = set()
+        for dev in devices:
+            key = dev.serial or dev.usb_port
+            present_keys.add(key)
+            hist = self._history.get(key)
+            if hist is None:
+                # Devices present on the first scan are the baseline (count 0).
+                # A device appearing later is a genuine connect.
+                if self._first_scan:
+                    hist = {'present': True, 'connect': 0, 'disconnect': 0}
+                else:
+                    hist = {'present': True, 'connect': 1, 'disconnect': 0}
+                    self._total_connects += 1
+                    self.get_logger().info(
+                        f'camera connected: {key} (total connects: {self._total_connects})')
+                self._history[key] = hist
+            elif not hist['present']:
+                hist['present'] = True
+                hist['connect'] += 1
+                self._total_connects += 1
+                self.get_logger().info(
+                    f'camera reconnected: {key} (x{hist["connect"]}, '
+                    f'total connects: {self._total_connects})')
+            dev.connect_count = hist['connect']
+            dev.disconnect_count = hist['disconnect']
+
+        for key, hist in self._history.items():
+            if hist['present'] and key not in present_keys:
+                hist['present'] = False
+                hist['disconnect'] += 1
+                self._total_disconnects += 1
+                self.get_logger().warn(
+                    f'camera disconnected: {key} (x{hist["disconnect"]}, '
+                    f'total disconnects: {self._total_disconnects})')
+
+        self._first_scan = False
+
     def _build_diagnostics(self, devices, stamp):
         diag = DiagnosticArray()
         diag.header.stamp = stamp
@@ -198,6 +247,8 @@ class UsbCameraMonitor(Node):
         summary.level = DiagnosticStatus.OK
         summary.message = f'{len(devices)} Orbbec camera(s) detected'
         summary.values.append(KeyValue(key='count', value=str(len(devices))))
+        summary.values.append(KeyValue(key='total_connects', value=str(self._total_connects)))
+        summary.values.append(KeyValue(key='total_disconnects', value=str(self._total_disconnects)))
         if self._expected:
             summary.values.append(KeyValue(key='expected', value=str(len(self._expected))))
             missing = [s for s in self._expected if s not in found_serials]
@@ -228,6 +279,28 @@ class UsbCameraMonitor(Node):
                 KeyValue(key='usb_generation', value=dev.usb_generation),
                 KeyValue(key='bcd_usb', value=dev.bcd_usb),
                 KeyValue(key='id_product', value=dev.id_product),
+                KeyValue(key='connect_count', value=str(dev.connect_count)),
+                KeyValue(key='disconnect_count', value=str(dev.disconnect_count)),
+            ]
+            diag.status.append(status)
+
+        # Cameras seen earlier but currently gone -> surface them as WARN so a
+        # drop is visible even though they are absent from `devices`.
+        present_keys = {d.serial or d.usb_port for d in devices}
+        for key, hist in self._history.items():
+            if hist['present'] or key in present_keys:
+                continue
+            status = DiagnosticStatus()
+            status.name = f'orbbec_usb: {key}'
+            status.hardware_id = key
+            status.level = DiagnosticStatus.WARN
+            status.message = (
+                f'currently disconnected (connects {hist["connect"]}, '
+                f'disconnects {hist["disconnect"]})')
+            status.values = [
+                KeyValue(key='present', value='false'),
+                KeyValue(key='connect_count', value=str(hist['connect'])),
+                KeyValue(key='disconnect_count', value=str(hist['disconnect'])),
             ]
             diag.status.append(status)
         return diag
