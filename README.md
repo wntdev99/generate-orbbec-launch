@@ -143,6 +143,23 @@ ros2 run generate_orbbec_launch usb_camera_monitor
 각 카메라에 대해 시리얼·제품명·USB 포트·링크 속도(`speed_mbps`)·USB 세대(`usb_generation`)·
 `bcd_usb`를 제공합니다.
 
+## 연결/해제 카운팅
+
+노드는 스캔 간 카메라 집합 변화를 추적해 **연결/해제 횟수**를 셉니다. **카운터는 노드(런치)
+시작 시 0부터** 시작합니다.
+
+- 시작 시점에 이미 붙어 있던 카메라 → baseline (`connect_count=0`)
+- 이후 빠졌다 → `disconnect_count` 증가, 다시 붙으면 → `connect_count` 증가
+- 시작 후 새로 나타난 카메라 → `connect_count=1`
+
+각 `OrbbecUsbDevice`에 `connect_count`/`disconnect_count`가 담기고, `/diagnostics` 요약에는
+`total_connects`/`total_disconnects`가, 그리고 **빠진 채로 있는 카메라**는 별도 **WARN**
+상태("currently disconnected (connects N, disconnects M)")로 표면화됩니다. 전이가 일어날 때마다
+로그도 남깁니다.
+
+> 폴링(`poll_period_sec`) 사이의 매우 빠른 뽑았다-꽂기는 놓칠 수 있습니다. `pyudev`가 설치돼
+> 있으면 핫플러그 이벤트로 즉시 스캔하므로 정확도가 올라갑니다.
+
 ## 제공 서비스
 
 | 서비스 | 타입 | 설명 |
