@@ -29,9 +29,19 @@ wifi_wan_monitor:
     weak_error_dbm: -80             # ERROR at/below this signal
     frame_id: ''
 
-link_latency_monitor:
+# Two link_latency_monitor instances (launch/link_latency.launch.py):
+#   internet -> end-to-end (router WiFi WAN + internet),  gateway -> local hop only.
+# Topics are separated by node name, e.g. /link_latency_internet/latency.
+link_latency_internet:
   ros__parameters:
-    target: '8.8.8.8'               # ping target (end-to-end latency / outage)
+    target: '8.8.8.8'               # end-to-end target
     timeout_sec: 1.0                # per-ping deadline = outage threshold
     period_sec: 1.0                 # loop / publish period (1 Hz)
+    frame_id: ''
+
+link_latency_gateway:
+  ros__parameters:
+    target: '192.168.34.1'          # the router (first hop, local segment)
+    timeout_sec: 1.0
+    period_sec: 1.0
     frame_id: ''

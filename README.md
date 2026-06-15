@@ -400,17 +400,34 @@ ros2 launch generate_orbbec_launch monitors.launch.py kernel_max_priority:=4 ker
 - **끊김**: `valid=false`가 이어지는 구간 → 복구 시 `~/outage`로 지속 시간/횟수 확인
 - 끊김 임계(=ping 데드라인)는 `timeout_sec`로 config에서 조정 (기본 1.0초)
 
-## 파라미터 (`config/monitors.yaml`)
+## 두 인스턴스 실행 (internet + gateway)
+
+노드는 단일 타깃이라, **인스턴스를 2개** 띄워 목적별로 토픽을 분리합니다(고장 위치 분리에 유용).
+`link_latency.launch.py`가 두 인스턴스를 함께 띄웁니다.
+
+| 인스턴스(노드명) | target | 토픽 |
+|---|---|---|
+| `link_latency_internet` | `8.8.8.8` (종단) | `/link_latency_internet/latency`, `/link_latency_internet/outage` |
+| `link_latency_gateway` | `192.168.34.1` (로컬 첫 홉) | `/link_latency_gateway/latency`, `/link_latency_gateway/outage` |
+
+```bash
+ros2 launch generate_orbbec_launch link_latency.launch.py
+ros2 launch generate_orbbec_launch link_latency.launch.py enable_gateway:=false   # internet만
+```
+
+각 메시지의 `target` 필드로도 어느 대상인지 구분됩니다. 두 토픽을 비교하면 "게이트웨이는 정상인데
+인터넷만 느림 → 상위(WiFi WAN/인터넷) 문제" 처럼 **원인을 좁힐 수** 있습니다.
+
+## 파라미터 (`config/monitors.yaml`, 인스턴스별 섹션)
+
+`link_latency_internet`, `link_latency_gateway` 두 섹션으로 관리합니다.
 
 | 파라미터 | 기본값 | 설명 |
 |---|---|---|
-| `target` | `8.8.8.8` | ping 대상 |
+| `target` | internet `8.8.8.8` / gateway `192.168.34.1` | ping 대상 |
 | `timeout_sec` | `1.0` | ping 데드라인 = 끊김 판정 기준 |
 | `period_sec` | `1.0` | 루프/발행 주기 |
 
-```bash
-ros2 launch generate_orbbec_launch link_latency_monitor.launch.py
-```
-
-> **검증 완료**: 빌드 통과 / outage state machine 단위검증(2회 끊김, 2초·1초 지속 정확) /
-> 라이브로 8.8.8.8 `valid=true rtt≈35ms`, 무응답 타깃 `valid=false rtt_ms=.nan` 확인.
+> **검증 완료**: 빌드 통과 / outage state machine 단위검증(2회 끊김, 2초·1초 지속) / 두 인스턴스
+> 라이브 — `/link_latency_gateway` rtt≈2.9ms, `/link_latency_internet` rtt≈37ms, 무응답 시
+> `valid=false rtt_ms=.nan` 확인.
