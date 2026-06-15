@@ -61,3 +61,41 @@ router_throughput_monitor:
     period_sec: 2.0                 # SSH each period -- keep modest
     ssh_timeout_sec: 8.0
     frame_id: ''
+
+# Service-controlled load generator. Trigger jobs at runtime, e.g.:
+#   ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+#     "{mode: 'udp', target: 'gateway', rate_mbps: 500, duration_sec: 30}"
+#   ros2 service call /load_generator/stop std_srvs/srv/Trigger {}
+load_generator:
+  ros__parameters:
+    internal_peer: ''               # LAN peer IP running load_sink (scope 'internal'); set me
+    internet_target: '8.8.8.8'      # scope 'internet' destination (WAN uplink)
+    default_port: 5201              # iperf3 default; tcp/udp use it too
+    default_duration_sec: 30.0      # used when StartLoad.duration_sec == 0
+    default_parallel: 4             # streams/sockets when StartLoad.parallel == 0
+    default_publish_hz: 100.0       # ros_pub rate when not derived from rate_mbps
+    ros_payload_bytes: 65000        # ros_pub message size (DDS/Zenoh middleware load)
+    udp_payload_bytes: 1400         # udp datagram size (<= typical MTU)
+    tcp_buffer_bytes: 65536         # tcp send() chunk
+    max_duration_sec: 300.0         # SAFETY: hard cap on job duration (0 = no cap)
+    max_rate_mbps: 1000.0           # SAFETY: hard cap on rate (0 = no cap)
+    ros_qos_depth: 10
+    ros_reliable: true              # RELIABLE stresses reliable QoS; false = BEST_EFFORT
+    iperf3_path: 'iperf3'
+    stats_period_sec: 1.0
+    frame_id: ''
+
+# Receiver for load_generator (run on the peer machine, or same host for loopback).
+load_sink:
+  ros__parameters:
+    tcp_port: 5201
+    udp_port: 5201
+    enable_tcp: true
+    enable_udp: true
+    enable_ros: true
+    bind_host: '0.0.0.0'
+    recv_bufsize: 65536
+    load_topic: '/load_generator/load_topic'  # the generator's ros_pub stream
+    ros_reliable: true
+    stats_period_sec: 1.0
+    frame_id: ''

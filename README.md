@@ -17,6 +17,9 @@
    (`net_throughput_monitor`, 인터페이스 자동 감지).
 7. 공유기 WAN/LAN 인터페이스 사용량(rx/tx)을 토픽으로 발행하는 **모니터 노드**
    (`router_throughput_monitor`, SSH).
+8. 서비스로 트리거하는 **부하 발생 노드**(`load_generator`) + 수신 노드(`load_sink`) —
+   ROS2/Zenoh 미들웨어 부하(`ros_pub`)와 네트워크 부하(`tcp`/`udp`/`iperf3`)를
+   게이트웨이/내부/외부 인터넷 범위로 발생시켜 테스트합니다.
 
 ## 패키지 구조
 
@@ -31,7 +34,10 @@ generate_orbbec_launch/
 │   ├── WifiWanStatus.msg        # 공유기 WiFi WAN 신호
 │   ├── PingLatency.msg          # latency 샘플 1건
 │   ├── LinkOutage.msg           # 끊김 1건(복구 시)
-│   └── NetThroughput.msg        # 인터페이스 throughput 1건
+│   ├── NetThroughput.msg        # 인터페이스 throughput 1건
+│   └── LoadStats.msg            # 부하 발생/수신 실시간 통계
+├── srv/
+│   └── StartLoad.srv            # load_generator 부하 작업 시작 요청
 ├── config/
 │   └── monitors.yaml            # 노드 파라미터 (주기 등) 중앙 관리
 ├── launch/
@@ -45,7 +51,9 @@ generate_orbbec_launch/
 │   ├── wifi_wan_monitor.py      # 공유기 WiFi WAN 신호 모니터 노드 (rclpy)
 │   ├── link_latency_monitor.py  # 종단 latency/끊김 모니터 노드 (rclpy)
 │   ├── net_throughput_monitor.py # 호스트 네트워크 사용량(rx/tx) 모니터 노드 (rclpy)
-│   └── router_throughput_monitor.py # 공유기 WAN/LAN 사용량 모니터 노드 (rclpy, SSH)
+│   ├── router_throughput_monitor.py # 공유기 WAN/LAN 사용량 모니터 노드 (rclpy, SSH)
+│   ├── load_generator.py       # 서비스 제어 부하 발생 노드 (ros_pub/tcp/udp/iperf3)
+│   └── load_sink.py            # 부하 수신 노드 (tcp/udp 싱크 + ROS 구독)
 └── scripts/
     ├── setup.sh                    # 의존성 설치 + colcon 빌드 (+선택: 라우터 SSH 키)
     └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
@@ -107,6 +115,8 @@ ros2 launch generate_orbbec_launch link_latency.launch.py      # latency interne
 `enable_kernel_monitor`, `enable_wifi_wan`, `enable_link_latency`, `enable_net_throughput`,
 `enable_router_throughput` (모두 기본 `true`). 머신마다 필요한 것만 켜면 됩니다(예: 카메라
 호스트는 usb+kernel, 유선 게이트웨이 머신은 wifi_wan+router_throughput+link_latency).
+부하 발생 노드 `enable_load_generator` / `enable_load_sink`는 **트래픽을 능동적으로
+밀어내므로 기본 `false`**입니다(필요 시 `enable_load_generator:=true`로 켭니다).
 
 ## 동작 방식
 
@@ -496,12 +506,15 @@ ros2 topic echo /net_throughput_monitor/throughput
 # `router_throughput_monitor` 노드 (공유기 WAN/LAN 사용량)
 
 공유기의 **인터페이스별 rx/tx 사용량**을 SSH로 읽어 발행합니다. 기본 대상은 **WAN(`sta1`)**,
-**LAN(`br-lan`)** 이며, 한 번의 SSH로 두 인터페이스를 함께 읽습니다. `NetThroughput`을
-재사용하며 인터페이스는 메시지의 `iface`로 구분됩니다.
+**LAN(`br-lan`)** 이며, 한 번의 SSH로 두 인터페이스를 함께 읽되 **인터페이스마다 별도 토픽**으로
+발행합니다(각 토픽이 단일 인터페이스라 `rqt_plot`/PlotJuggler에서 바로 플롯 가능). 토픽 이름에
+못 쓰는 `-`는 `_`로 바뀝니다(`br-lan` → `br_lan`).
 
 ```bash
 ros2 launch generate_orbbec_launch router_throughput_monitor.launch.py
-ros2 topic echo /router_throughput_monitor/throughput   # iface=sta1(WAN) / br-lan(LAN)
+ros2 topic echo /router_throughput_monitor/sta1      # WAN
+ros2 topic echo /router_throughput_monitor/br_lan    # LAN
+# 플롯 예: /router_throughput_monitor/sta1/rx_bps , /router_throughput_monitor/br_lan/tx_bps
 ```
 
 ## 인증 — 비밀번호 저장 안 함 (SSH 키 필수)
@@ -512,7 +525,7 @@ ros2 topic echo /router_throughput_monitor/throughput   # iface=sta1(WAN) / br-l
 
 | 토픽 | 타입 | 내용 |
 |---|---|---|
-| `~/throughput` | `NetThroughput` | iface별 `rx_bytes`/`tx_bytes`(누적) + `rx_bps`/`tx_bps`(rate) |
+| `~/<iface>` (예: `~/sta1`, `~/br_lan`) | `NetThroughput` | `rx_bytes`/`tx_bytes`(누적) + `rx_bps`/`tx_bps`(rate). 인터페이스별 1토픽 |
 
 | 파라미터 | 기본값 | 설명 |
 |---|---|---|
@@ -523,3 +536,100 @@ ros2 topic echo /router_throughput_monitor/throughput   # iface=sta1(WAN) / br-l
 > **검증 완료**: 빌드 통과 / 파서를 실제 라우터 출력으로 검증
 > (`sta1` rx 49,145,849·tx 84,377,713 / `br-lan` rx 541,785,232·tx 1,031,511,877) /
 > 노드 정상 spin(키 없으면 warn) / `all.launch.py`에 포함되어 7개 노드 동시 기동 확인.
+
+---
+
+# `load_generator` / `load_sink` 노드 (부하 발생 + 수신)
+
+네트워크와 ROS2/Zenoh 미들웨어에 **의도적으로 부하를 발생**시키는 노드입니다.
+`load_generator`는 idle 상태로 떠 있다가 **서비스 호출**로 작업을 시작하고, `load_sink`는
+상대 머신(또는 같은 호스트의 loopback)에서 트래픽을 받아 수신율을 발행합니다.
+
+> ⚠️ **트래픽을 실제로 폭주시킵니다.** 본인이 관리 권한을 가진 네트워크에서만, 가급적
+> 점검 시간대에 사용하십시오. 운영망 보호를 위해 기본 안전 상한(`max_duration_sec`,
+> `max_rate_mbps`)이 걸려 있고, 무제한 블래스트(`rate_mbps: 0`)는 `allow_unlimited: true`를
+> 명시해야만 허용됩니다.
+
+## 엔진(`mode`) × 범위(`target`)
+
+| `mode` | 무엇을 부하 주나 | 수신 측 필요 | 적합한 범위 |
+|---|---|---|---|
+| `ros_pub` | `~/load_topic`에 대용량 페이로드 고속 발행 → **DDS/Zenoh 미들웨어** | `load_sink`(ROS 구독) | ROS2/Zenoh 통신 |
+| `tcp` | N개 TCP 소켓으로 버퍼 전송 (리스너 필요) | `load_sink` 또는 `iperf3 -s` | ② 내부 LAN |
+| `udp` | UDP 데이터그램 발사 (리스너 없어도 egress 발생) | (불필요) | ① 게이트웨이 링크, ③ WAN 업링크 |
+| `iperf3` | `iperf3` 클라이언트 래핑 (정확한 표준 측정) | `iperf3 -s` 또는 공용 서버 | 정밀 측정 |
+
+`target` 키워드 자동 해석: `gateway`(기본 라우트 게이트웨이) / `internal`(`internal_peer` 파라미터)
+/ `internet`(`internet_target` 파라미터) / 그 외 문자열은 호스트·IP로 그대로 사용.
+
+## 실행 & 사용법
+
+```bash
+# 수신 측(상대 머신, 또는 단일 PC loopback 테스트 시 같은 호스트)
+ros2 launch generate_orbbec_launch load_sink.launch.py
+
+# 부하 측
+ros2 launch generate_orbbec_launch load_generator.launch.py
+
+# (1) ROS2/Zenoh 미들웨어 부하: 200Hz x 50KB ≈ 80 Mbps
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'ros_pub', publish_hz: 200.0, payload_bytes: 50000, duration_sec: 30.0}"
+
+# (2) 내부 LAN 포화 (load_sink 띄운 피어로 TCP, internal_peer 설정 필요)
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'tcp', target: 'internal', rate_mbps: 500.0, parallel: 8, duration_sec: 30.0}"
+
+# (3) 게이트웨이 링크 / WAN 업링크 포화 (UDP는 리스너 불필요)
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'udp', target: 'gateway', rate_mbps: 800.0, duration_sec: 30.0}"
+
+# 정밀 측정 (대상에 iperf3 -s 필요)
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'iperf3', target: 'internal', rate_mbps: 0.0, allow_unlimited: true, duration_sec: 20.0}"
+
+# 중지 + 실시간 통계
+ros2 service call /load_generator/stop std_srvs/srv/Trigger "{}"
+ros2 topic echo /load_generator/stats     # tx_bps, msgs_total, errors, detail
+ros2 topic echo /load_sink/stats          # rx_bps, bytes_total
+```
+
+## Zenoh로 테스트 (DDS와 동일 노드)
+
+`ros_pub`은 **RMW에 독립적**이므로, 같은 노드를 RMW만 바꿔 띄우면 그대로 Zenoh 부하 테스트가
+됩니다. (rmw_zenoh 설치 전제)
+
+```bash
+# 별도 터미널에서 Zenoh 라우터 1회 기동
+ros2 run rmw_zenoh_cpp rmw_zenohd
+
+# generator / sink 양쪽 모두 같은 RMW로
+export RMW_IMPLEMENTATION=rmw_zenoh_cpp
+ros2 launch generate_orbbec_launch load_sink.launch.py
+ros2 launch generate_orbbec_launch load_generator.launch.py
+# 이후 ros_pub 작업을 호출하면 /load_sink/stats 의 rx_bps 로 Zenoh 처리율 확인
+```
+
+## 서비스 / 토픽 / 파라미터
+
+| 인터페이스 | 타입 | 내용 |
+|---|---|---|
+| `/load_generator/start` | `StartLoad` (srv) | 작업 시작 (한 번에 1개; 실행 중이면 거부) |
+| `/load_generator/stop` | `std_srvs/Trigger` | 실행 중 작업 중지 |
+| `/load_generator/stats` | `LoadStats` | `tx_bps`, `bytes_total`, `msgs_total`, `errors`, `detail` |
+| `/load_generator/load_topic` | `std_msgs/UInt8MultiArray` | `ros_pub` 페이로드 스트림 |
+| `/load_sink/stats` | `LoadStats` | `rx_bps`, `bytes_total`(수신 누적) |
+
+| 주요 파라미터(`load_generator`) | 기본값 | 설명 |
+|---|---|---|
+| `internal_peer` | `''` | 범위 `internal` 대상 (load_sink 띄운 피어 IP) — **설정 필요** |
+| `internet_target` | `8.8.8.8` | 범위 `internet` 대상 (WAN 업링크) |
+| `default_port` | `5201` | tcp/udp/iperf3 포트 (iperf3 기본) |
+| `default_parallel` | `4` | 스트림/소켓 수 (요청 `parallel`=0일 때) |
+| `max_duration_sec` | `300.0` | **안전**: 작업 최대 지속 시간 (0=무제한) |
+| `max_rate_mbps` | `1000.0` | **안전**: 최대 rate 상한 (0=무제한) |
+| `ros_reliable` | `true` | RELIABLE QoS 부하 / `false`=BEST_EFFORT |
+
+> **검증 완료**: colcon 빌드 통과(`StartLoad.srv`/`LoadStats.msg` 생성, 두 노드 설치) /
+> loopback 스모크 테스트 — `ros_pub` 200Hz×50KB에서 `tx_bps`≈10 MB/s 측정, `udp` 100 Mbps
+> 목표 대비 `tx_bps`≈12.5 MB/s 측정 / 안전 cap 동작 확인(rate 5000→1000, duration 9999→300) /
+> 무제한 블래스트(`rate_mbps: 0`)는 `allow_unlimited` 없으면 거부 / 한 번에 1개 작업 가드 동작.

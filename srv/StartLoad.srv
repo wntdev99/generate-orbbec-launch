@@ -1,0 +1,16 @@
+# Start one load job on load_generator. One job runs at a time; calling
+# start while a job is active is rejected unless ~/stop is called first.
+string mode            # 'ros_pub' | 'tcp' | 'udp' | 'iperf3'
+string target          # 'gateway' | 'internal' | 'internet' | host/IP  (ignored for ros_pub)
+uint32 port            # TCP/UDP/iperf3 port (0 = node default)
+float64 rate_mbps      # target rate in Mbit/s (0 = engine max; requires allow_unlimited)
+uint32 parallel        # parallel streams/sockets (0 = node default, clamped to >=1)
+float64 duration_sec   # job duration in seconds (0 = node default; capped at max_duration_sec)
+float64 publish_hz     # ros_pub only: publish frequency (0 = node default)
+uint32 payload_bytes   # ros_pub/udp payload size per message (0 = node default)
+bool allow_unlimited   # explicitly permit rate_mbps=0 (max blast) past the safety cap
+---
+bool accepted          # true if the job was started
+string message         # human-readable status / reason for rejection
+string job_id          # id of the started job ('' if rejected)
+string resolved_target # actual host/ip the job will hit

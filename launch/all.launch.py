@@ -8,7 +8,9 @@ Composes the per-group launch files and shares one config file
   ros2 launch generate_orbbec_launch all.launch.py config_file:=/path/to/your.yaml
 
 Nodes: usb_camera_monitor, kernel_log_monitor, wifi_wan_monitor,
-       link_latency_internet, link_latency_gateway.
+       link_latency_internet, link_latency_gateway, net_throughput_monitor,
+       router_throughput_monitor. load_generator / load_sink are OFF by default
+       (they push traffic): enable with enable_load_generator:=true.
 Note: wifi_wan_monitor needs an SSH key to the router (scripts/setup.sh --wifi-key);
       otherwise it stays up and reports ERROR on /diagnostics.
 """
@@ -35,6 +37,8 @@ def generate_launch_description():
     enable_link_latency = LaunchConfiguration('enable_link_latency')
     enable_net_throughput = LaunchConfiguration('enable_net_throughput')
     enable_router_throughput = LaunchConfiguration('enable_router_throughput')
+    enable_load_generator = LaunchConfiguration('enable_load_generator')
+    enable_load_sink = LaunchConfiguration('enable_load_sink')
 
     def include(filename, condition=None, extra=None):
         args = {'config_file': config_file}
@@ -62,6 +66,11 @@ def generate_launch_description():
                               description='net_throughput_monitor (host NIC rx/tx)'),
         DeclareLaunchArgument('enable_router_throughput', default_value='true',
                               description='router_throughput_monitor (WAN/LAN rx/tx, needs SSH key)'),
+        # Load generation is OFF by default -- it actively pushes traffic, not a passive monitor.
+        DeclareLaunchArgument('enable_load_generator', default_value='false',
+                              description='load_generator (service-controlled traffic source)'),
+        DeclareLaunchArgument('enable_load_sink', default_value='false',
+                              description='load_sink (tcp/udp/ros receiver for the generator)'),
 
         # usb + kernel (their own per-node toggles are passed through)
         include('monitors.launch.py', extra={
@@ -72,4 +81,6 @@ def generate_launch_description():
         include('link_latency.launch.py', condition=enable_link_latency),
         include('net_throughput_monitor.launch.py', condition=enable_net_throughput),
         include('router_throughput_monitor.launch.py', condition=enable_router_throughput),
+        include('load_generator.launch.py', condition=enable_load_generator),
+        include('load_sink.launch.py', condition=enable_load_sink),
     ])
