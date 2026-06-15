@@ -23,8 +23,15 @@ wifi_wan_monitor:
     router_host: '192.168.34.1'
     router_user: 'root'
     wan_iface: 'sta1'               # router WiFi WAN (uplink) interface, per iwinfo
-    poll_period_sec: 15.0           # how often to SSH the router (s) -- keep generous
+    poll_period_sec: 1.0           # how often to SSH the router (s) -- keep generous
     ssh_timeout_sec: 8.0
     weak_warn_dbm: -70              # WARN at/below this signal
     weak_error_dbm: -80             # ERROR at/below this signal
+    frame_id: ''
+
+link_latency_monitor:
+  ros__parameters:
+    target: '8.8.8.8'               # ping target (end-to-end latency / outage)
+    timeout_sec: 1.0                # per-ping deadline = outage threshold
+    period_sec: 1.0                 # loop / publish period (1 Hz)
     frame_id: ''

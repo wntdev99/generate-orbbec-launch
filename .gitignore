@@ -4,6 +4,7 @@
 # ...but the hand-authored monitor launch files ARE tracked.
 !/launch/monitors.launch.py
 !/launch/wifi_wan_monitor.launch.py
+!/launch/link_latency_monitor.launch.py
 
 # ROS 2 / colcon build artifacts
 /build/

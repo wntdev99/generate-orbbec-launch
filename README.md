@@ -1,7 +1,7 @@
 # generate_orbbec_launch
 
 여러 대의 Orbbec Gemini 카메라를 실행하기 위한 **ROS 2 패키지**(`ament_cmake`, C++/Python
-혼합 가능, 대상 배포판 **Jazzy**)입니다. 두 가지 핵심 기능을 제공합니다.
+혼합 가능, 대상 배포판 **Jazzy**)입니다. 다음 기능을 제공합니다.
 
 1. 연결된 Orbbec(VID `2bc5`) 카메라를 자동 탐지하고 대화형으로 이름·primary를 지정해 멀티
    카메라 런치 파일을 생성하는 **스크립트**(`scripts/generate_orbbec_launch.sh`).
@@ -11,6 +11,8 @@
    (`kernel_log_monitor`).
 4. 공유기 WiFi WAN(업링크) 신호 dBm을 토픽으로 발행하는 **모니터 노드**
    (`wifi_wan_monitor`) — 유선 연결 머신용.
+5. 종단 latency와 끊김(지속 시간·횟수)을 토픽으로 발행하는 **모니터 노드**
+   (`link_latency_monitor`).
 
 ## 패키지 구조
 
@@ -22,7 +24,9 @@ generate_orbbec_launch/
 │   ├── OrbbecUsbDevice.msg      # USB 카메라 1대의 정보
 │   ├── OrbbecUsbDeviceArray.msg # 탐지된 카메라 스냅샷
 │   ├── KernelLogEntry.msg       # 커널 로그 1줄
-│   └── WifiWanStatus.msg        # 공유기 WiFi WAN 신호
+│   ├── WifiWanStatus.msg        # 공유기 WiFi WAN 신호
+│   ├── PingLatency.msg          # latency 샘플 1건
+│   └── LinkOutage.msg           # 끊김 1건(복구 시)
 ├── config/
 │   └── monitors.yaml            # 노드 파라미터 (주기 등) 중앙 관리
 ├── launch/
@@ -31,7 +35,8 @@ generate_orbbec_launch/
 ├── nodes/
 │   ├── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
 │   ├── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
-│   └── wifi_wan_monitor.py      # 공유기 WiFi WAN 신호 모니터 노드 (rclpy)
+│   ├── wifi_wan_monitor.py      # 공유기 WiFi WAN 신호 모니터 노드 (rclpy)
+│   └── link_latency_monitor.py  # 종단 latency/끊김 모니터 노드 (rclpy)
 └── scripts/
     ├── setup.sh                    # 의존성 설치 + colcon 빌드 (+선택: 라우터 SSH 키)
     └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
@@ -370,3 +375,42 @@ ros2 launch generate_orbbec_launch monitors.launch.py kernel_max_priority:=4 ker
 
 > **검증 완료**: FastDDS(localhost)로 `ros2 launch` 실행 시 두 노드(`/usb_camera_monitor`,
 > `/kernel_log_monitor`)가 모두 기동하고 인자가 반영됨을 확인했습니다.
+
+---
+
+# `link_latency_monitor` 노드 (지연 vs 끊김)
+
+대상(기본 `8.8.8.8`)에 대한 **종단 latency와 끊김**을 측정합니다. `period_sec`(기본 1초)마다
+`timeout_sec`(기본 1초) 데드라인으로 ping 1회를 보냅니다.
+
+- 응답이 timeout 이내 → `~/latency`에 RTT(ms) 발행
+- 무응답 → `~/latency`에 `valid=false`, `rtt_ms=NaN`(`.nan`) 발행 (측정 불가를 빈값으로 표현)
+- **끊김(outage)** = 첫 실패부터 다음 응답까지. 복구되면 `~/outage`에 그 **지속 시간**을 1회 발행하고
+  **끊김 횟수**(`outage_count`)를 +1 (카운터는 launch 시 0부터).
+
+## 발행 토픽
+
+| 토픽 | 타입 | 시점 | 내용 |
+|---|---|---|---|
+| `~/latency` | `PingLatency` | 매 주기(1Hz) | `valid`, `rtt_ms`(무응답 시 NaN), `outage_count` |
+| `~/outage` | `LinkOutage` | 끊김 복구 시 1회 | `duration_sec`(끊김 지속), `outage_count` |
+
+## 판단 기준
+- **지연**: `valid=true`인데 `rtt_ms`가 큰 경우
+- **끊김**: `valid=false`가 이어지는 구간 → 복구 시 `~/outage`로 지속 시간/횟수 확인
+- 끊김 임계(=ping 데드라인)는 `timeout_sec`로 config에서 조정 (기본 1.0초)
+
+## 파라미터 (`config/monitors.yaml`)
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `target` | `8.8.8.8` | ping 대상 |
+| `timeout_sec` | `1.0` | ping 데드라인 = 끊김 판정 기준 |
+| `period_sec` | `1.0` | 루프/발행 주기 |
+
+```bash
+ros2 launch generate_orbbec_launch link_latency_monitor.launch.py
+```
+
+> **검증 완료**: 빌드 통과 / outage state machine 단위검증(2회 끊김, 2초·1초 지속 정확) /
+> 라이브로 8.8.8.8 `valid=true rtt≈35ms`, 무응답 타깃 `valid=false rtt_ms=.nan` 확인.
