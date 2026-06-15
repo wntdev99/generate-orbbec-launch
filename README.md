@@ -30,8 +30,10 @@ generate_orbbec_launch/
 ├── config/
 │   └── monitors.yaml            # 노드 파라미터 (주기 등) 중앙 관리
 ├── launch/
+│   ├── all.launch.py            # 모든 모니터 노드 한 번에 (기본 전부 ON, 그룹 토글)
 │   ├── monitors.launch.py       # usb+kernel 모니터 함께 실행 (config 사용)
-│   └── wifi_wan_monitor.launch.py  # WiFi WAN 모니터 실행 (config 사용)
+│   ├── wifi_wan_monitor.launch.py  # WiFi WAN 모니터 실행 (config 사용)
+│   └── link_latency.launch.py   # latency internet+gateway 인스턴스 (config 사용)
 ├── nodes/
 │   ├── usb_camera_monitor.py    # USB 카메라 인벤토리 모니터 노드 (rclpy)
 │   ├── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
@@ -80,11 +82,24 @@ ros2 launch generate_orbbec_launch monitors.launch.py config_file:=/path/to/your
 
 ## 모니터 실행 (launch)
 
+모든 launch는 **하나의 공유 config**(`config/monitors.yaml`)를 읽습니다. 각 노드는 자기 이름과
+일치하는 섹션만 가져가므로 한 파일을 공유해도 안전합니다.
+
 ```bash
-ros2 launch generate_orbbec_launch monitors.launch.py          # usb + kernel (config 적용)
-ros2 launch generate_orbbec_launch monitors.launch.py enable_kernel_monitor:=false
-ros2 launch generate_orbbec_launch wifi_wan_monitor.launch.py  # WiFi WAN dBm (config 적용)
+# 전부 한 번에 (기본 모두 ON) -- 5개 노드
+ros2 launch generate_orbbec_launch all.launch.py
+ros2 launch generate_orbbec_launch all.launch.py enable_wifi_wan:=false enable_link_latency:=false
+
+# 그룹별로 따로
+ros2 launch generate_orbbec_launch monitors.launch.py          # usb + kernel
+ros2 launch generate_orbbec_launch wifi_wan_monitor.launch.py  # WiFi WAN dBm
+ros2 launch generate_orbbec_launch link_latency.launch.py      # latency internet + gateway
 ```
+
+`all.launch.py`는 위 그룹 launch들을 묶어 실행하며, 토글: `enable_usb_monitor`,
+`enable_kernel_monitor`, `enable_wifi_wan`, `enable_link_latency` (모두 기본 `true`).
+머신마다 필요한 것만 켜면 됩니다(예: 카메라 호스트는 usb+kernel, 유선 게이트웨이 머신은
+wifi_wan+link_latency).
 
 ## 동작 방식
 

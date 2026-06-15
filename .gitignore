@@ -5,6 +5,7 @@
 !/launch/monitors.launch.py
 !/launch/wifi_wan_monitor.launch.py
 !/launch/link_latency.launch.py
+!/launch/all.launch.py
 
 # ROS 2 / colcon build artifacts
 /build/
