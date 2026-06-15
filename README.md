@@ -30,13 +30,26 @@ generate_orbbec_launch/
 │   ├── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
 │   └── wifi_wan_monitor.py      # 공유기 WiFi WAN 신호 모니터 노드 (rclpy)
 └── scripts/
+    ├── setup.sh                    # 의존성 설치 + colcon 빌드 (+선택: 라우터 SSH 키)
     └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
 ```
 
-## 빌드
+## 설치 / 빌드
+
+워크스페이스 `src/` 아래에 둔 뒤 setup 스크립트로 한 번에 처리할 수 있습니다.
 
 ```bash
-cd ~/ros2_ws        # colcon 워크스페이스의 src/ 아래에 이 패키지를 둡니다
+cd <workspace>/src/generate_orbbec_launch
+./scripts/setup.sh                 # 의존성 설치(rosdep + ethtool/pyudev) + colcon 빌드
+./scripts/setup.sh --no-deps       # 빌드만
+./scripts/setup.sh --wifi-key      # 추가로 wifi_wan_monitor용 라우터 SSH 키 설정(비번 1회 입력)
+```
+
+스크립트는 자신의 위치(`<ws>/src/<pkg>/scripts`)에서 워크스페이스 루트를 자동 감지해 거기서
+`colcon build --packages-select generate_orbbec_launch`를 실행합니다. 수동으로 하려면:
+
+```bash
+cd <workspace>
 colcon build --packages-select generate_orbbec_launch
 source install/setup.bash
 ```
