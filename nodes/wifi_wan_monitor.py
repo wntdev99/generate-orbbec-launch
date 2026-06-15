@@ -111,12 +111,17 @@ class WifiWanMonitor(Node):
         try:
             ok, data = self._query_router()
             now = self.get_clock().now().to_msg()
+            # "associated" = query succeeded AND a real signal was parsed.
+            # If the WiFi WAN dropped, iwinfo still answers (ok=True) but has
+            # no ESSID/Signal -> data has no 'signal_dbm'.
+            associated = bool(ok and isinstance(data, dict) and 'signal_dbm' in data)
 
             msg = WifiWanStatus()
             msg.header = Header(stamp=now, frame_id=self._frame_id)
             msg.iface = self._iface
             msg.reachable = ok
-            if ok:
+            msg.associated = associated
+            if associated:
                 msg.essid = data.get('essid', '')
                 msg.signal_dbm = data.get('signal_dbm', 0)
                 msg.noise_dbm = data.get('noise_dbm', 0)
@@ -124,11 +129,11 @@ class WifiWanMonitor(Node):
                 msg.quality_max = data.get('quality_max', 0)
                 msg.bitrate_mbps = data.get('bitrate_mbps', 0.0)
             self._pub.publish(msg)
-            self._diag_pub.publish(self._build_diag(ok, data if ok else str(data), now))
+            self._diag_pub.publish(self._build_diag(ok, associated, data, now))
         except Exception as exc:
             self.get_logger().warn(f'poll failed: {exc}')
 
-    def _build_diag(self, ok, data, stamp):
+    def _build_diag(self, ok, associated, data, stamp):
         diag = DiagnosticArray()
         diag.header.stamp = stamp
         st = DiagnosticStatus()
@@ -138,6 +143,16 @@ class WifiWanMonitor(Node):
             st.level = DiagnosticStatus.ERROR
             st.message = f'router unreachable ({data}); SSH key set up?'
             st.values = [KeyValue(key='reachable', value='false')]
+            diag.status.append(st)
+            return diag
+        if not associated:
+            st.name = f'wifi_wan: {self._iface}'
+            st.level = DiagnosticStatus.ERROR
+            st.message = 'WiFi WAN down (router reachable, but uplink not associated)'
+            st.values = [
+                KeyValue(key='reachable', value='true'),
+                KeyValue(key='associated', value='false'),
+            ]
             diag.status.append(st)
             return diag
 
@@ -153,6 +168,7 @@ class WifiWanMonitor(Node):
             st.level = DiagnosticStatus.OK
             st.message = f'uplink {sig} dBm'
         st.values = [
+            KeyValue(key='associated', value='true'),
             KeyValue(key='essid', value=str(data.get('essid', ''))),
             KeyValue(key='signal_dbm', value=str(sig)),
             KeyValue(key='noise_dbm', value=str(data.get('noise_dbm', 0))),

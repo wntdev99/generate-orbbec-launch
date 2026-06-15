@@ -302,6 +302,17 @@ ros2 run generate_orbbec_launch wifi_wan_monitor \
   --ros-args -p router_host:=192.168.34.1 -p wan_iface:=sta1
 ```
 
+## 끊김/연결 판단 — `reachable` vs `associated`
+
+- **`reachable`** = 공유기에 SSH 질의(iwinfo)가 성공했는가. 모니터링 경로의 성공 여부일 뿐,
+  WiFi WAN 링크 상태가 아닙니다.
+- **`associated`** = WiFi WAN이 실제로 외부 AP에 붙어 있는가(유효한 ESSID/신호 존재).
+  업링크가 끊기면 `reachable=true`라도 `associated=false`가 됩니다.
+
+따라서 **"무선 연결됨"** 은 `reachable && associated`로 판단하십시오. `/diagnostics`는
+도달 불가 → **ERROR**, 도달했지만 미연결 → **ERROR("WiFi WAN down")**, 연결됨 → 신호
+세기로 OK/WARN/ERROR로 보고합니다. (신호 0 dBm을 OK로 오판하던 문제도 이로써 해결됩니다.)
+
 ## 인증 — 비밀번호 저장 안 함 (SSH 키 필수)
 
 `ssh -o BatchMode=yes`(키 기반)로만 접속합니다. 코드/설정에 **비밀번호를 저장하지 않습니다.**
@@ -317,7 +328,7 @@ ssh-copy-id root@192.168.34.1
 
 | 토픽 | 타입 |
 |---|---|
-| `~/wifi_wan` | `generate_orbbec_launch/WifiWanStatus` (reachable, essid, signal_dbm, noise_dbm, quality, bitrate) |
+| `~/wifi_wan` | `generate_orbbec_launch/WifiWanStatus` (reachable, **associated**, essid, signal_dbm, noise_dbm, quality, bitrate) |
 | `/diagnostics` | `diagnostic_msgs/DiagnosticArray` (신호 세기로 OK/WARN/ERROR) |
 
 | 파라미터 | 기본값 | 설명 |
