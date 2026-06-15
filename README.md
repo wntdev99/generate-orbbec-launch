@@ -545,6 +545,9 @@ ros2 topic echo /router_throughput_monitor/br_lan    # LAN
 `load_generator`는 idle 상태로 떠 있다가 **서비스 호출**로 작업을 시작하고, `load_sink`는
 상대 머신(또는 같은 호스트의 loopback)에서 트래픽을 받아 수신율을 발행합니다.
 
+> 📖 **각 부하가 어느 계층·구간에 작용하는지**는 다이어그램으로 정리한
+> [`docs/load_testing.md`](docs/load_testing.md)를 참조하십시오.
+
 > ⚠️ **트래픽을 실제로 폭주시킵니다.** 본인이 관리 권한을 가진 네트워크에서만, 가급적
 > 점검 시간대에 사용하십시오. 운영망 보호를 위해 기본 안전 상한(`max_duration_sec`,
 > `max_rate_mbps`)이 걸려 있고, 무제한 블래스트(`rate_mbps: 0`)는 `allow_unlimited: true`를
