@@ -596,6 +596,202 @@ ros2 topic echo /load_generator/stats     # tx_bps, msgs_total, errors, detail
 ros2 topic echo /load_sink/stats          # rx_bps, bytes_total
 ```
 
+## `StartLoad` 요청 필드 — 무엇을 어떻게 세팅하나
+
+`ros2 service call ... StartLoad "{ ... }"`의 중괄호 안에 넣는 값들입니다. **`0` 또는 생략하면
+노드 파라미터의 기본값**이 적용되므로, 보통은 `mode` + `target` + `rate_mbps`/`duration_sec`
+정도만 지정하면 됩니다.
+
+| 필드 | 타입 | 0/생략 시 동작 | 설명 · 설정 팁 |
+|---|---|---|---|
+| `mode` | string | (필수) | `ros_pub` / `tcp` / `udp` / `iperf3` 중 하나. 잘못되면 거부. |
+| `target` | string | (네트워크 모드 필수) | `gateway`/`internal`/`internet` 키워드 또는 호스트·IP 직접. `ros_pub`은 무시(토픽 발행). |
+| `port` | uint32 | `default_port`(**5201**) | tcp/udp/iperf3 목적지 포트. `load_sink`/`iperf3 -s`가 듣는 포트와 **일치**해야 함. |
+| `rate_mbps` | float64 | 모드별로 다름(아래) | 목표 속도(Mbit/s). 소켓 모드에서 `0`=무제한(→`allow_unlimited` 필요). `max_rate_mbps` 초과 시 자동 클램프. |
+| `parallel` | uint32 | `default_parallel`(**4**) | 동시 스트림/소켓 수. 링크를 더 채우려면 8~16. `ros_pub`은 **1로 고정**(대신 `publish_hz`↑). |
+| `duration_sec` | float64 | `default_duration_sec`(**30**) | 작업 지속 시간(초). `max_duration_sec`(**300**) 초과 시 클램프. `~/stop`으로 조기 종료 가능. |
+| `publish_hz` | float64 | `default_publish_hz`(**100**) | **`ros_pub` 전용** 발행 주파수. 단, `rate_mbps>0`이면 그 값에서 hz를 역산하므로 무시됨. |
+| `payload_bytes` | uint32 | `ros_pub`→**65000** / `udp`→**1400** | 메시지/데이터그램 크기(byte). udp는 단편화 피하려면 **≤1472** 권장. tcp는 이 값 대신 `tcp_buffer_bytes` 사용. |
+| `allow_unlimited` | bool | `false` | 소켓 모드에서 `rate_mbps: 0`(최대 블래스트)을 쓸 때 **반드시 `true`**. 안전 상한 우회 명시. |
+
+### 모드별로 어떤 필드를 쓰나
+
+| 필드 | `ros_pub` | `tcp` | `udp` | `iperf3` |
+|---|:---:|:---:|:---:|:---:|
+| `target` | ⛔ 무시 | ✅ 필수 | ✅ 필수 | ✅ 필수 |
+| `port` | — | ✅ | ✅ | ✅ |
+| `rate_mbps` | 🔸 선택(hz 역산) | 🔸 선택 | 🔸 선택 | 🔸 선택 |
+| `parallel` | 🔒 1 고정 | ✅ | ✅ | ✅ (iperf3 `-P`) |
+| `duration_sec` | ✅ | ✅ | ✅ | ✅ |
+| `publish_hz` | ✅ 핵심 | — | — | — |
+| `payload_bytes` | ✅ 핵심 | — (`tcp_buffer_bytes`) | ✅ | — |
+| `allow_unlimited` | — | `rate_mbps:0`이면 필수 | `rate_mbps:0`이면 필수 | `rate_mbps:0`이면 필수 |
+
+> **속도 정하는 두 가지 방식** —
+> ① 직접: `rate_mbps`로 목표 속도를 못박는다(소켓·iperf3 권장, ros_pub도 가능).
+> ② ros_pub 간접: `publish_hz × payload_bytes`로 결정. 예) `200Hz × 50000B = 10MB/s ≈ 80Mbps`.
+> `rate_mbps`를 주면 ①이 우선하며 hz는 자동 역산됩니다.
+
+### 먼저 세팅해야 할 노드 파라미터
+
+요청 필드만으로 안 되는 것들은 노드 파라미터(`config/monitors.yaml`)에서 미리 잡아야 합니다.
+
+- **`internal_peer`** — `target: 'internal'`을 쓰려면 **반드시** `load_sink`를 띄운 피어 IP를
+  지정해야 합니다(미설정 시 거부). `gateway`/`internet`은 자동 해석되어 설정 불필요.
+- **`max_rate_mbps` / `max_duration_sec`** — 안전 상한. 더 센 부하가 필요하면 여기서 올립니다.
+- **`ros_reliable`** — `true`면 RELIABLE QoS(재전송 부하 큼), `false`면 BEST_EFFORT.
+
+세팅 방법 두 가지:
+
+```bash
+# (A) config/monitors.yaml 의 load_generator 섹션을 수정 후 재빌드
+#     load_generator: { ros__parameters: { internal_peer: '192.168.34.50', max_rate_mbps: 2000.0 } }
+colcon build --packages-select generate_orbbec_launch && source install/setup.bash
+
+# (B) 런치 없이 즉석에서 -p 로 덮어쓰기 (빠른 테스트용)
+ros2 run generate_orbbec_launch load_generator --ros-args \
+  -p internal_peer:=192.168.34.50 -p default_port:=5201 -p max_rate_mbps:=2000.0
+```
+
+> ⚠️ `port`는 양쪽이 같아야 합니다. `load_sink`의 `tcp_port`/`udp_port`(기본 5201)와
+> 요청 `port`(또는 `default_port`)를 맞추십시오. `iperf3`는 대상에서 `iperf3 -s -p <port>`로 서버를 띄워야 합니다.
+
+## 케이스별 종합 정리 (config · 부하 지점 · 서비스 · 필드)
+
+### 한눈에 보는 요약
+
+| 케이스 | 부하가 걸리는 지점 | 사전 config (`load_generator` 섹션) | 수신측 준비 |
+|---|---|---|---|
+| **A. ROS2 미들웨어(DDS)** | 응용 직렬화 + RMW(Fast DDS) + QoS + 전송 | 기본값 OK (`ros_reliable`로 QoS 선택) | `load_sink`(`enable_ros: true`) |
+| **B. ROS2 미들웨어(Zenoh)** | 위와 동일, 단 **Zenoh 전송** | 기본값 + 환경변수 `RMW_IMPLEMENTATION=rmw_zenoh_cpp` | `load_sink`(같은 RMW) + `rmw_zenohd` |
+| **C. ② 내부 LAN** | 커널 TCP 스택 + NIC + 스위치 링크 (GW 미경유) | `internal_peer`=피어 IP, `default_port`=싱크 포트 | `load_sink`(`enable_tcp: true`) |
+| **D. ① 게이트웨이 링크** | NIC egress + **PC↔공유기 물리 링크** + 공유기 | 불필요 (`gateway` 자동 해석) | 불필요 (UDP fire-and-forget) |
+| **E. ③ 외부 WAN** | 공유기 → **ISP 업링크** | `internet_target` (기본 `8.8.8.8`) | 불필요 |
+| **F. 정밀 측정(iperf3)** | 커널 소켓 + NIC + 링크 (표준 측정값) | `internal_peer`/대상, `default_port` | 대상에 `iperf3 -s -p <port>` |
+
+---
+
+### A. ROS2 미들웨어 부하 (DDS) — `ros_pub`
+
+**부하 지점**: rclpy → RMW(Fast DDS) → QoS 처리 → 전송(같은 호스트면 공유메모리, 원격이면 NIC).
+**config**: 기본값으로 동작. RELIABLE 재전송까지 부하하려면 `ros_reliable: true`(기본), BEST_EFFORT는 `false`.
+
+```bash
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'ros_pub', publish_hz: 200.0, payload_bytes: 50000, duration_sec: 30.0}"
+```
+
+| 필드 | 값 | 의미 |
+|---|---|---|
+| `mode` | `ros_pub` | RMW 경유 토픽 발행으로 미들웨어 부하 (`target` 불필요) |
+| `publish_hz` | `200.0` | 초당 200회 발행 |
+| `payload_bytes` | `50000` | 메시지당 50 KB → 200×50KB = **10 MB/s ≈ 80 Mbps** |
+| `duration_sec` | `30.0` | 30초 후 자동 종료 (생략 시 30, 상한 300) |
+
+---
+
+### B. ROS2 미들웨어 부하 (Zenoh) — `ros_pub` + RMW 전환
+
+**부하 지점**: A와 동일하되 전송이 **Zenoh**(zenohd 라우터 경유). 서비스 호출은 A와 동일.
+**config**: 노드 파라미터는 동일. 대신 generator·sink **양쪽**을 같은 RMW로 띄움.
+
+```bash
+ros2 run rmw_zenoh_cpp rmw_zenohd &                 # Zenoh 라우터(1회)
+export RMW_IMPLEMENTATION=rmw_zenoh_cpp             # load_sink / load_generator 양쪽
+ros2 launch generate_orbbec_launch load_sink.launch.py
+ros2 launch generate_orbbec_launch load_generator.launch.py
+# 서비스 호출 자체는 A 케이스와 100% 동일
+```
+
+---
+
+### C. 내부 LAN 포화 (②) — `tcp`
+
+**부하 지점**: 커널 TCP 스택(혼잡제어·ACK) + NIC + 스위치 링크. 같은 서브넷이라 **게이트웨이 미경유**.
+**config**: `internal_peer`에 `load_sink` 띄운 피어 IP, `default_port`를 싱크 포트와 일치.
+
+```bash
+# config/monitors.yaml -> load_generator: { internal_peer: '192.168.34.50' }   (또는 -p)
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'tcp', target: 'internal', rate_mbps: 500.0, parallel: 8, duration_sec: 30.0}"
+```
+
+| 필드 | 값 | 의미 |
+|---|---|---|
+| `mode` | `tcp` | TCP 스트림 연속 전송 (수신측 `load_sink` 필요) |
+| `target` | `internal` | `internal_peer` 파라미터의 IP로 해석 |
+| `rate_mbps` | `500.0` | 목표 500 Mbit/s (`max_rate_mbps` 초과 시 클램프) |
+| `parallel` | `8` | 동시 TCP 소켓 8개 (링크를 더 채우려면 ↑) |
+| `duration_sec` | `30.0` | 30초 |
+
+---
+
+### D. 게이트웨이 링크 포화 (①) — `udp`
+
+**부하 지점**: NIC egress + **PC↔공유기 물리 링크** + 공유기 처리 능력. UDP라 **리스너 없이도** 포화.
+**config**: 불필요 — `gateway`는 기본 라우트에서 자동 해석.
+
+```bash
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'udp', target: 'gateway', rate_mbps: 800.0, duration_sec: 30.0}"
+```
+
+| 필드 | 값 | 의미 |
+|---|---|---|
+| `mode` | `udp` | UDP 데이터그램 발사 (fire-and-forget, 수신측 불필요) |
+| `target` | `gateway` | 기본 라우트 게이트웨이 IP로 자동 해석 |
+| `rate_mbps` | `800.0` | 목표 800 Mbit/s |
+| `duration_sec` | `30.0` | 30초 |
+| (`payload_bytes`) | 생략 | `udp_payload_bytes` 기본 **1400 B**(단편화 방지) 사용 |
+
+> 측정: `net_throughput_monitor`(호스트 NIC tx)·`link_latency_gateway`(첫 홉 지연)와 함께 보면 효과 확인이 쉽습니다.
+
+---
+
+### E. 외부 WAN 업링크 포화 (③) — `udp`
+
+**부하 지점**: PC → 공유기 → **ISP 업링크**. 인터넷 회선 대역폭을 포화.
+**config**: `internet_target` 기본 `8.8.8.8`(필요 시 변경).
+
+```bash
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'udp', target: 'internet', rate_mbps: 0.0, allow_unlimited: true, duration_sec: 20.0}"
+```
+
+| 필드 | 값 | 의미 |
+|---|---|---|
+| `mode` | `udp` | UDP 발사 |
+| `target` | `internet` | `internet_target` 파라미터로 해석 |
+| `rate_mbps` | `0.0` | **0 = 최대 블래스트** (속도 제한 없음) |
+| `allow_unlimited` | `true` | `rate_mbps: 0`을 허용하는 안전 우회 플래그 (없으면 거부) |
+| `duration_sec` | `20.0` | 20초 |
+
+> ⚠️ 실제 인터넷 회선을 포화시킵니다. 본인 회선·점검 시간대에만, 약관을 확인하고 사용하십시오.
+
+---
+
+### F. 정밀 측정 — `iperf3`
+
+**부하 지점**: 커널 소켓 + NIC + 링크. iperf3가 **정확한 표준 처리량**을 측정.
+**config**: 대상(`internal_peer` 또는 직접 IP), `default_port`. **대상에 iperf3 서버 필수**.
+
+```bash
+# 대상 머신:  iperf3 -s -p 5201
+ros2 service call /load_generator/start generate_orbbec_launch/srv/StartLoad \
+  "{mode: 'iperf3', target: 'internal', parallel: 10, rate_mbps: 0.0, allow_unlimited: true, duration_sec: 20.0}"
+```
+
+| 필드 | 값 | 의미 |
+|---|---|---|
+| `mode` | `iperf3` | iperf3 클라이언트 래핑 (TCP) |
+| `target` | `internal` | `internal_peer`로 해석 (iperf3 `-c <host>`) |
+| `parallel` | `10` | iperf3 `-P 10` (병렬 스트림) |
+| `rate_mbps` | `0.0` | 무제한(최대) 측정 → iperf3 `-b 0` |
+| `allow_unlimited` | `true` | `rate_mbps: 0` 허용 (필수) |
+| `duration_sec` | `20.0` | iperf3 `-t 20`. 결과는 `~/stats`의 `detail`에 Mbps로 요약 |
+
+---
+
 ## Zenoh로 테스트 (DDS와 동일 노드)
 
 `ros_pub`은 **RMW에 독립적**이므로, 같은 노드를 RMW만 바꿔 띄우면 그대로 Zenoh 부하 테스트가
