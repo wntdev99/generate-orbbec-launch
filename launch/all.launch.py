@@ -34,6 +34,7 @@ def generate_launch_description():
     enable_wifi_wan = LaunchConfiguration('enable_wifi_wan')
     enable_link_latency = LaunchConfiguration('enable_link_latency')
     enable_net_throughput = LaunchConfiguration('enable_net_throughput')
+    enable_router_throughput = LaunchConfiguration('enable_router_throughput')
 
     def include(filename, condition=None, extra=None):
         args = {'config_file': config_file}
@@ -59,6 +60,8 @@ def generate_launch_description():
                               description='link_latency internet + gateway instances'),
         DeclareLaunchArgument('enable_net_throughput', default_value='true',
                               description='net_throughput_monitor (host NIC rx/tx)'),
+        DeclareLaunchArgument('enable_router_throughput', default_value='true',
+                              description='router_throughput_monitor (WAN/LAN rx/tx, needs SSH key)'),
 
         # usb + kernel (their own per-node toggles are passed through)
         include('monitors.launch.py', extra={
@@ -68,4 +71,5 @@ def generate_launch_description():
         include('wifi_wan_monitor.launch.py', condition=enable_wifi_wan),
         include('link_latency.launch.py', condition=enable_link_latency),
         include('net_throughput_monitor.launch.py', condition=enable_net_throughput),
+        include('router_throughput_monitor.launch.py', condition=enable_router_throughput),
     ])

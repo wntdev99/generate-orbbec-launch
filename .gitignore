@@ -6,6 +6,7 @@
 !/launch/wifi_wan_monitor.launch.py
 !/launch/link_latency.launch.py
 !/launch/net_throughput_monitor.launch.py
+!/launch/router_throughput_monitor.launch.py
 !/launch/all.launch.py
 
 # ROS 2 / colcon build artifacts

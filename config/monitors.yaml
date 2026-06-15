@@ -52,3 +52,12 @@ net_throughput_monitor:
     route_target: '8.8.8.8'         # target used to resolve the egress iface when 'auto'
     period_sec: 1.0
     frame_id: ''
+
+router_throughput_monitor:
+  ros__parameters:
+    router_host: '192.168.34.1'
+    router_user: 'root'
+    interfaces: ['sta1', 'br-lan']  # WAN (WiFi uplink), LAN bridge (all clients)
+    period_sec: 2.0                 # SSH each period -- keep modest
+    ssh_timeout_sec: 8.0
+    frame_id: ''

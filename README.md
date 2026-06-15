@@ -15,6 +15,8 @@
    (`link_latency_monitor`).
 6. 네트워크 인터페이스 사용량(rx/tx)을 토픽으로 발행하는 **모니터 노드**
    (`net_throughput_monitor`, 인터페이스 자동 감지).
+7. 공유기 WAN/LAN 인터페이스 사용량(rx/tx)을 토픽으로 발행하는 **모니터 노드**
+   (`router_throughput_monitor`, SSH).
 
 ## 패키지 구조
 
@@ -42,7 +44,8 @@ generate_orbbec_launch/
 │   ├── kernel_log_monitor.py    # 커널 로그(dmesg) 모니터 노드 (rclpy)
 │   ├── wifi_wan_monitor.py      # 공유기 WiFi WAN 신호 모니터 노드 (rclpy)
 │   ├── link_latency_monitor.py  # 종단 latency/끊김 모니터 노드 (rclpy)
-│   └── net_throughput_monitor.py # 네트워크 사용량(rx/tx) 모니터 노드 (rclpy)
+│   ├── net_throughput_monitor.py # 호스트 네트워크 사용량(rx/tx) 모니터 노드 (rclpy)
+│   └── router_throughput_monitor.py # 공유기 WAN/LAN 사용량 모니터 노드 (rclpy, SSH)
 └── scripts/
     ├── setup.sh                    # 의존성 설치 + colcon 빌드 (+선택: 라우터 SSH 키)
     └── generate_orbbec_launch.sh   # 런치 파일 생성 스크립트 (ROS 노드가 아닌 순수 스크립트)
@@ -90,7 +93,7 @@ ros2 launch generate_orbbec_launch monitors.launch.py config_file:=/path/to/your
 일치하는 섹션만 가져가므로 한 파일을 공유해도 안전합니다.
 
 ```bash
-# 전부 한 번에 (기본 모두 ON) -- 5개 노드
+# 전부 한 번에 (기본 모두 ON) -- 7개 노드
 ros2 launch generate_orbbec_launch all.launch.py
 ros2 launch generate_orbbec_launch all.launch.py enable_wifi_wan:=false enable_link_latency:=false
 
@@ -101,9 +104,9 @@ ros2 launch generate_orbbec_launch link_latency.launch.py      # latency interne
 ```
 
 `all.launch.py`는 위 그룹 launch들을 묶어 실행하며, 토글: `enable_usb_monitor`,
-`enable_kernel_monitor`, `enable_wifi_wan`, `enable_link_latency` (모두 기본 `true`).
-머신마다 필요한 것만 켜면 됩니다(예: 카메라 호스트는 usb+kernel, 유선 게이트웨이 머신은
-wifi_wan+link_latency).
+`enable_kernel_monitor`, `enable_wifi_wan`, `enable_link_latency`, `enable_net_throughput`,
+`enable_router_throughput` (모두 기본 `true`). 머신마다 필요한 것만 켜면 됩니다(예: 카메라
+호스트는 usb+kernel, 유선 게이트웨이 머신은 wifi_wan+router_throughput+link_latency).
 
 ## 동작 방식
 
@@ -487,3 +490,36 @@ ros2 topic echo /net_throughput_monitor/throughput
 > **검증 완료**: 빌드 통과 / 라이브로 egress 자동 감지(`wlp0s20f3`)와 rx_bytes·tx_bytes·
 > rx_bps·tx_bps(실시간 변동) 발행 확인 / `all.launch.py`에 포함되어 6개 노드 동시 기동 확인.
 > (공유기 인터페이스 `sta1`=WAN/`br-lan`=LAN throughput은 SSH 필요 — 다음 단계)
+
+---
+
+# `router_throughput_monitor` 노드 (공유기 WAN/LAN 사용량)
+
+공유기의 **인터페이스별 rx/tx 사용량**을 SSH로 읽어 발행합니다. 기본 대상은 **WAN(`sta1`)**,
+**LAN(`br-lan`)** 이며, 한 번의 SSH로 두 인터페이스를 함께 읽습니다. `NetThroughput`을
+재사용하며 인터페이스는 메시지의 `iface`로 구분됩니다.
+
+```bash
+ros2 launch generate_orbbec_launch router_throughput_monitor.launch.py
+ros2 topic echo /router_throughput_monitor/throughput   # iface=sta1(WAN) / br-lan(LAN)
+```
+
+## 인증 — 비밀번호 저장 안 함 (SSH 키 필수)
+`ssh BatchMode`(키 기반)만 사용합니다. `scripts/setup.sh --wifi-key`로 키를 깔면 됩니다
+(wifi_wan_monitor와 같은 키). 키가 없으면 노드는 살아 있되 경고만 남기고 발행하지 않습니다.
+
+## 발행 토픽 / 파라미터
+
+| 토픽 | 타입 | 내용 |
+|---|---|---|
+| `~/throughput` | `NetThroughput` | iface별 `rx_bytes`/`tx_bytes`(누적) + `rx_bps`/`tx_bps`(rate) |
+
+| 파라미터 | 기본값 | 설명 |
+|---|---|---|
+| `router_host` / `router_user` | `192.168.34.1` / `root` | 공유기 SSH 대상 |
+| `interfaces` | `['sta1', 'br-lan']` | WAN, LAN (필요 시 `wifi0`/`wifi1`/`eth0` 등 추가) |
+| `period_sec` | `2.0` | SSH 폴링 주기 |
+
+> **검증 완료**: 빌드 통과 / 파서를 실제 라우터 출력으로 검증
+> (`sta1` rx 49,145,849·tx 84,377,713 / `br-lan` rx 541,785,232·tx 1,031,511,877) /
+> 노드 정상 spin(키 없으면 warn) / `all.launch.py`에 포함되어 7개 노드 동시 기동 확인.
