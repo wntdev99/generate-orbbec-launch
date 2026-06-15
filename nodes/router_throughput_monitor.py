@@ -3,13 +3,15 @@
 
 Reads /sys/class/net/<iface>/statistics on the router for the configured
 interfaces (default WAN `sta1` and LAN `br-lan`) in a single SSH call, and
-publishes one NetThroughput message per interface (distinguished by `iface`).
+publishes each interface on its OWN topic so the series are individually
+plottable.
 
 Auth: SSH BatchMode (key-based) -- NO password stored. Set up a key with
 scripts/setup.sh --wifi-key (same key as wifi_wan_monitor uses).
 
-Publishes:
-  * <node>/throughput  (generate_orbbec_launch/NetThroughput)  -- one per iface per period
+Publishes (one per configured interface; '-' -> '_' in the topic name):
+  * <node>/sta1    (generate_orbbec_launch/NetThroughput)   -- WAN
+  * <node>/br_lan  (generate_orbbec_launch/NetThroughput)   -- LAN (br-lan)
 """
 
 import re
@@ -63,7 +65,13 @@ class RouterThroughputMonitor(Node):
         if period <= 0.0:
             period = 2.0
 
-        self._pub = self.create_publisher(NetThroughput, '~/throughput', 10)
+        # One topic per interface so each carries a single interface's series
+        # (plottable in rqt_plot/PlotJuggler). Created up-front (not from the
+        # worker thread). Topic-illegal chars (e.g. '-' in br-lan) -> '_'.
+        self._pubs = {}
+        for ifc in self._ifaces:
+            topic = '~/' + re.sub(r'[^A-Za-z0-9_]', '_', ifc)
+            self._pubs[ifc] = self.create_publisher(NetThroughput, topic, 10)
         self._prev = {}  # iface -> (rx, tx, monotonic)
         self._period = period
         self._stop = threading.Event()
@@ -117,6 +125,9 @@ class RouterThroughputMonitor(Node):
         if not rclpy.ok():
             return
         for ifc, (rx, tx) in stats.items():
+            pub = self._pubs.get(ifc)
+            if pub is None:
+                continue
             rx_bps = tx_bps = 0.0
             prev = self._prev.get(ifc)
             if prev:
@@ -133,7 +144,7 @@ class RouterThroughputMonitor(Node):
             msg.tx_bytes = tx
             msg.rx_bps = rx_bps
             msg.tx_bps = tx_bps
-            self._pub.publish(msg)
+            pub.publish(msg)
 
     def destroy_node(self):
         self._stop.set()
