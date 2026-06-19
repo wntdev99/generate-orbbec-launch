@@ -186,13 +186,15 @@ for i in "${!NAMES[@]}"; do
         sync_mode="hardware_triggering"
     fi
     cat >> "$OUTPUT" << EOF
+    # Mapped by serial_number (stable across reboots), not usb_port.
+    # usb_port=${PORTS[$i]} at generation time (informational only).
     cam_${i} = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(launch_file_dir, 'gemini_330_series.launch.py')
         ),
         launch_arguments={
             'camera_name': '${NAMES[$i]}',
-            'usb_port': '${PORTS[$i]}',
+            'serial_number': '${SERIALS[$i]}',
             'device_num': '${count}',
             'sync_mode': '${sync_mode}',
             'config_file_path': config_file_path
