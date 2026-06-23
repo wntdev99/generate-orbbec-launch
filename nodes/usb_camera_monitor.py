@@ -78,8 +78,15 @@ class UsbCameraMonitor(Node):
         self._shutdown = threading.Event()
 
         # connect/disconnect tracking (counters start at 0 each launch)
-        # key (serial or usb_port) -> {'present': bool, 'connect': int, 'disconnect': int}
+        # canonical key (serial, else usb_port) ->
+        #   {'present': bool, 'connect': int, 'disconnect': int, 'dev': OrbbecUsbDevice}
+        # 'dev' holds the last-seen snapshot so disconnected cameras can still be
+        # republished (with present=False) and keep their counts observable.
         self._history = {}
+        # usb_port -> last serial seen on that port. Lets a scan whose serial read
+        # transiently failed (empty during plug/unplug) recover the camera's stable
+        # identity instead of forking a second history entry keyed by usb_port.
+        self._port_to_serial = {}
         self._first_scan = True
         self._total_connects = 0
         self._total_disconnects = 0
@@ -176,13 +183,19 @@ class UsbCameraMonitor(Node):
                 self._update_history(devices)
                 now = self.get_clock().now().to_msg()
 
+                # Publish every known camera (connected + previously-seen-now-gone)
+                # so a disconnect is visible immediately on this same camera's entry,
+                # not only when it later reconnects.
+                all_devices = self._known_devices()
+                present_count = sum(1 for d in all_devices if d.present)
+
                 arr = OrbbecUsbDeviceArray()
                 arr.header = Header(stamp=now, frame_id=self._frame_id)
-                arr.count = len(devices)
-                arr.devices = devices
+                arr.count = present_count
+                arr.devices = all_devices
                 self._dev_pub.publish(arr)
                 self._diag_pub.publish(self._build_diagnostics(devices, now))
-                return len(devices)
+                return present_count
         except Exception as exc:
             self.get_logger().warn(f'scan_and_publish failed: {exc}')
             return 0
@@ -195,35 +208,51 @@ class UsbCameraMonitor(Node):
         self.get_logger().info(response.message)
         return response
 
+    def _canonical_key(self, dev):
+        """Return the stable identity key for a device. Prefer the serial; if the
+        serial read failed (empty -- common for the split second around a plug or
+        unplug), recover the serial last seen on this usb_port so the same camera
+        is not split across two history entries (serial vs usb_port)."""
+        port = dev.usb_port
+        if dev.serial:
+            self._port_to_serial[port] = dev.serial
+            return dev.serial
+        recovered = self._port_to_serial.get(port)
+        if recovered:
+            dev.serial = recovered  # backfill so the published snapshot stays consistent
+            return recovered
+        return port
+
     def _update_history(self, devices):
         """Compare the current device set to the previous one and count
-        connect/disconnect transitions. Also fills each device's
-        connect_count/disconnect_count. Must run under self._lock."""
+        connect/disconnect transitions. Stores the last-seen snapshot per camera
+        and stamps present/connect_count/disconnect_count on every known device.
+        Must run under self._lock."""
         present_keys = set()
         for dev in devices:
-            key = dev.serial or dev.usb_port
+            key = self._canonical_key(dev)
             present_keys.add(key)
             hist = self._history.get(key)
             if hist is None:
                 # Devices present on the first scan are the baseline (count 0).
                 # A device appearing later is a genuine connect.
                 if self._first_scan:
-                    hist = {'present': True, 'connect': 0, 'disconnect': 0}
+                    hist = {'present': True, 'connect': 0, 'disconnect': 0, 'dev': dev}
                 else:
-                    hist = {'present': True, 'connect': 1, 'disconnect': 0}
+                    hist = {'present': True, 'connect': 1, 'disconnect': 0, 'dev': dev}
                     self._total_connects += 1
                     self.get_logger().info(
                         f'camera connected: {key} (total connects: {self._total_connects})')
                 self._history[key] = hist
-            elif not hist['present']:
-                hist['present'] = True
-                hist['connect'] += 1
-                self._total_connects += 1
-                self.get_logger().info(
-                    f'camera reconnected: {key} (x{hist["connect"]}, '
-                    f'total connects: {self._total_connects})')
-            dev.connect_count = hist['connect']
-            dev.disconnect_count = hist['disconnect']
+            else:
+                hist['dev'] = dev  # refresh the snapshot with live link metadata
+                if not hist['present']:
+                    hist['present'] = True
+                    hist['connect'] += 1
+                    self._total_connects += 1
+                    self.get_logger().info(
+                        f'camera reconnected: {key} (x{hist["connect"]}, '
+                        f'total connects: {self._total_connects})')
 
         for key, hist in self._history.items():
             if hist['present'] and key not in present_keys:
@@ -234,7 +263,22 @@ class UsbCameraMonitor(Node):
                     f'camera disconnected: {key} (x{hist["disconnect"]}, '
                     f'total disconnects: {self._total_disconnects})')
 
+        # Stamp current state onto every known snapshot (present and absent alike)
+        # so the published array carries correct, persistent counts for each camera.
+        for hist in self._history.values():
+            snapshot = hist['dev']
+            snapshot.present = hist['present']
+            snapshot.connect_count = hist['connect']
+            snapshot.disconnect_count = hist['disconnect']
+
         self._first_scan = False
+
+    def _known_devices(self):
+        """All cameras seen since node start: connected first, then disconnected.
+        Must run under self._lock (reads self._history)."""
+        present = [h['dev'] for h in self._history.values() if h['present']]
+        absent = [h['dev'] for h in self._history.values() if not h['present']]
+        return present + absent
 
     def _build_diagnostics(self, devices, stamp):
         diag = DiagnosticArray()
@@ -286,9 +330,8 @@ class UsbCameraMonitor(Node):
 
         # Cameras seen earlier but currently gone -> surface them as WARN so a
         # drop is visible even though they are absent from `devices`.
-        present_keys = {d.serial or d.usb_port for d in devices}
         for key, hist in self._history.items():
-            if hist['present'] or key in present_keys:
+            if hist['present']:
                 continue
             status = DiagnosticStatus()
             status.name = f'orbbec_usb: {key}'
